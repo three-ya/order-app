@@ -12,6 +12,13 @@ export interface Adjustment {
   amount: number
 }
 
+export interface OrderMenuItem {
+  name: string
+  price: number  // 合菜用 0；單點填實際金額
+  qty: number
+  note: string
+}
+
 export interface Order {
   id: string
   order_date: string
@@ -22,6 +29,7 @@ export interface Order {
   unit_price: number
   quantity: number
   adjustments: Adjustment[]
+  order_menu: OrderMenuItem[]
   phone: string | null
   note: string | null
   menu_id: string | null
@@ -34,13 +42,16 @@ export interface Order {
 export interface Menu {
   id: string
   name: string
+  price: number
   is_default: boolean
+  menu_type: '合菜' | '單點'
   created_at: string
 }
 
 export interface MenuItem {
   id: string
   menu_id: string
+  category: string | null
   name: string
   price: number
   sort_order: number
@@ -56,6 +67,7 @@ export type OrderFormData = {
   unit_price: number
   quantity: number
   adjustments: Adjustment[]
+  order_menu: OrderMenuItem[]
   phone: string
   note: string
   menu_id: string | null
