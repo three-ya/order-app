@@ -67,6 +67,14 @@ function exportCSV(orders: Order[], date: string) {
   URL.revokeObjectURL(url)
 }
 
+// ─── time helpers ───────────────────────────────────────────────
+function parseTimeText(t: string | null): { period: string; specific: string } {
+  if (!t) return { period: '', specific: '' }
+  if (t.startsWith('中午')) return { period: '中午', specific: t.slice(2).trim() }
+  if (t.startsWith('晚上')) return { period: '晚上', specific: t.slice(2).trim() }
+  return { period: '晚上', specific: t.trim() } // 舊格式相容
+}
+
 // ─── components ─────────────────────────────────────────────────
 
 function AdjustmentsField({ value, onChange }: {
@@ -118,7 +126,10 @@ function OrderForm({ initial, onSave, onCancel }: {
   onSave: (data: OrderFormData) => Promise<void>
   onCancel: () => void
 }) {
-  const [form, setForm] = useState<OrderFormData>(initial)
+  const parsed = parseTimeText(initial.time_text)
+  const [form, setForm]           = useState<OrderFormData>(initial)
+  const [timePeriod, setTimePeriod]   = useState(parsed.period)
+  const [timeSpecific, setTimeSpecific] = useState(parsed.specific)
   const [saving, setSaving] = useState(false)
 
   function set(field: keyof OrderFormData, value: unknown) {
@@ -128,7 +139,10 @@ function OrderForm({ initial, onSave, onCancel }: {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setSaving(true)
-    await onSave(form)
+    const timeText = timePeriod
+      ? (timeSpecific ? `${timePeriod} ${timeSpecific}` : timePeriod)
+      : ''
+    await onSave({ ...form, time_text: timeText })
     setSaving(false)
   }
 
@@ -139,9 +153,30 @@ function OrderForm({ initial, onSave, onCancel }: {
           <label className="text-xs text-gray-500 block mb-1">桌位</label>
           <input placeholder="A6A7" value={form.table_no} onChange={e => set('table_no', e.target.value)} />
         </div>
-        <div>
+        <div className="col-span-2 sm:col-span-1">
           <label className="text-xs text-gray-500 block mb-1">時間</label>
-          <input placeholder="6:30" value={form.time_text} onChange={e => set('time_text', e.target.value)} />
+          <div className="flex gap-1.5 items-center flex-wrap">
+            {['中午', '晚上'].map(p => (
+              <button
+                key={p}
+                type="button"
+                onClick={() => setTimePeriod(prev => prev === p ? '' : p)}
+                className={`px-3 py-1.5 text-sm rounded-lg border transition-colors ${
+                  timePeriod === p
+                    ? 'bg-gray-900 text-white border-gray-900'
+                    : 'bg-white border-gray-200 hover:bg-gray-100'
+                }`}
+              >{p}</button>
+            ))}
+            {timePeriod && (
+              <input
+                className="w-20 !py-1.5"
+                placeholder="6:30"
+                value={timeSpecific}
+                onChange={e => setTimeSpecific(e.target.value)}
+              />
+            )}
+          </div>
         </div>
         <div className="col-span-2">
           <label className="text-xs text-gray-500 block mb-1">客戶姓名</label>
@@ -161,7 +196,13 @@ function OrderForm({ initial, onSave, onCancel }: {
         </div>
         <div className="col-span-2 sm:col-span-4">
           <label className="text-xs text-gray-500 block mb-1">備註</label>
-          <input placeholder="特殊需求…" value={form.note} onChange={e => set('note', e.target.value)} />
+          <textarea
+            placeholder="特殊需求、座位安排、特別注意事項…"
+            value={form.note}
+            onChange={e => set('note', e.target.value)}
+            rows={3}
+            style={{ resize: 'vertical' }}
+          />
         </div>
       </div>
 
