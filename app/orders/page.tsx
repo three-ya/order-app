@@ -38,7 +38,7 @@ function exportCSV(orders: Order[], date: string) {
     return [o.confirmed?'✓':'',o.time_text??'',o.table_no??'',o.customer_name??'',
       o.unit_price,o.quantity,menuText,adjText,orderTotal(o),o.phone??'',o.note??'']
   })
-  const csv = [headers,...rows].map(r=>r.map(c=>{const s=String(c);return /[,"\n]/.test(s)?`"${s.replace(/"/g,'""')}"`':s}).join(',')).join('\n')
+  const csv = [headers,...rows].map(r=>r.map(c=>{const s=String(c);return /[,"\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s}).join(',')).join('\n')
   const blob = new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8;'})
   const url = URL.createObjectURL(blob)
   const a = Object.assign(document.createElement('a'),{href:url,download:`訂單_${date}.csv`})
