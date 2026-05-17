@@ -223,17 +223,29 @@ function OrderForm({ initial, onSave, onCancel }: {
   )
 }
 
-function OrderRow({ order, onToggle, onEdit, onDelete }: {
+function OrderRow({ order, onToggle, onEdit, onDelete, onQuickUpdate }: {
   order: Order
   onToggle: () => void
   onEdit: () => void
   onDelete: () => void
+  onQuickUpdate: (patch: { table_no: string | null }) => void
 }) {
   const adjs = order.adjustments ?? []
   const total = orderTotal(order)
+  const [showBreakdown, setShowBreakdown] = useState(false)
+  const [editingTable, setEditingTable]   = useState(false)
+  const [tableVal, setTableVal]           = useState(order.table_no ?? '')
+
+  useEffect(() => { setTableVal(order.table_no ?? '') }, [order.table_no])
+
+  function saveTable() {
+    const next = tableVal.trim() || null
+    if (next !== (order.table_no ?? null)) onQuickUpdate({ table_no: next })
+    setEditingTable(false)
+  }
 
   return (
-    <div className={`grid grid-cols-[28px_1fr_120px_64px] gap-3 px-4 py-3 border-b border-gray-100 last:border-0 items-start ${!order.confirmed ? 'opacity-60' : ''}`}>
+    <div className={`grid grid-cols-[28px_1fr_100px_64px] gap-3 px-4 py-3 border-b border-gray-100 last:border-0 items-start ${!order.confirmed ? 'opacity-60' : ''}`}>
       {/* confirm toggle */}
       <button
         onClick={onToggle}
@@ -248,8 +260,25 @@ function OrderRow({ order, onToggle, onEdit, onDelete }: {
       {/* content */}
       <div>
         <div className="flex flex-wrap items-center gap-1.5">
-          {order.table_no && (
-            <span className="font-mono text-xs bg-gray-100 border border-gray-200 rounded px-2 py-0.5">{order.table_no}</span>
+          {/* 桌次：點擊快速編輯 */}
+          {editingTable ? (
+            <input
+              autoFocus
+              className="font-mono text-xs w-20 !py-0.5 !px-1.5 !rounded"
+              value={tableVal}
+              onChange={e => setTableVal(e.target.value)}
+              onBlur={saveTable}
+              onKeyDown={e => {
+                if (e.key === 'Enter') saveTable()
+                if (e.key === 'Escape') { setTableVal(order.table_no ?? ''); setEditingTable(false) }
+              }}
+            />
+          ) : (
+            <span
+              className="font-mono text-xs bg-gray-100 border border-gray-200 rounded px-2 py-0.5 cursor-pointer hover:bg-gray-200 transition-colors"
+              onClick={() => setEditingTable(true)}
+              title="點擊快速編輯桌次"
+            >{order.table_no || <span className="text-gray-400 italic">桌次</span>}</span>
           )}
           {order.time_text && (
             <span className="text-xs bg-blue-50 text-blue-600 rounded px-2 py-0.5">🕐 {order.time_text}</span>
@@ -259,20 +288,30 @@ function OrderRow({ order, onToggle, onEdit, onDelete }: {
         {(order.phone || order.note) && (
           <div className="flex flex-wrap gap-3 mt-1 text-xs text-gray-500">
             {order.phone && <span>📞 {order.phone}</span>}
-            {order.note && <span>📝 {order.note}</span>}
+            {order.note && <span className="whitespace-pre-wrap">📝 {order.note}</span>}
           </div>
         )}
       </div>
 
-      {/* amount */}
-      <div className="text-right">
-        <div className="text-xs text-gray-400 font-mono">{order.unit_price.toLocaleString()} × {order.quantity}</div>
-        {adjs.map((a, i) => (
-          <div key={i} className={`text-xs font-mono ${a.amount < 0 ? 'text-red-400' : 'text-gray-400'}`}>
-            {a.amount >= 0 ? '+' : '−'} {fmtMoney(a.amount)}
-          </div>
-        ))}
-        <div className="text-sm font-medium mt-0.5">{fmtMoney(total)}</div>
+      {/* amount：點擊切換明細 */}
+      <div
+        className="text-right cursor-pointer select-none"
+        onClick={() => setShowBreakdown(b => !b)}
+        title="點擊顯示/隱藏明細"
+      >
+        {showBreakdown ? (
+          <>
+            <div className="text-xs text-gray-400 font-mono">{order.unit_price.toLocaleString()} × {order.quantity}</div>
+            {adjs.map((a, i) => (
+              <div key={i} className={`text-xs font-mono ${a.amount < 0 ? 'text-red-400' : 'text-gray-400'}`}>
+                {a.amount >= 0 ? '+' : '−'} {fmtMoney(a.amount)}
+              </div>
+            ))}
+            <div className="text-sm font-medium mt-0.5 text-blue-600 underline decoration-dotted">{fmtMoney(total)}</div>
+          </>
+        ) : (
+          <div className="text-sm font-medium text-gray-700 underline decoration-dotted">{fmtMoney(total)}</div>
+        )}
       </div>
 
       {/* actions */}
@@ -294,6 +333,7 @@ export default function OrdersPage() {
   const [profile, setProfile]         = useState<Profile | null>(null)
   const [loading, setLoading]         = useState(true)
   const [search, setSearch]           = useState('')
+  const [periodFilter, setPeriodFilter] = useState<'全部' | '中午' | '晚上'>('全部')
   const [showForm, setShowForm]       = useState(false)
   const [editingOrder, setEditingOrder] = useState<Order | null>(null)
 
@@ -331,9 +371,13 @@ export default function OrdersPage() {
 
   // stats
   const filtered = orders.filter(o => {
-    if (!search) return true
-    const q = search.toLowerCase()
-    return (o.customer_name ?? '').toLowerCase().includes(q) || (o.phone ?? '').includes(q)
+    if (search) {
+      const q = search.toLowerCase()
+      if (!(o.customer_name ?? '').toLowerCase().includes(q) && !(o.phone ?? '').includes(q)) return false
+    }
+    if (periodFilter === '中午') return (o.time_text ?? '').startsWith('中午')
+    if (periodFilter === '晚上') return (o.time_text ?? '').startsWith('晚上')
+    return true
   })
   const totalAmount  = filtered.reduce((s, o) => s + orderTotal(o), 0)
   const confirmedCnt = filtered.filter(o => o.confirmed).length
@@ -368,6 +412,11 @@ export default function OrdersPage() {
   async function handleDelete(order: Order) {
     if (!confirm(`確定刪除「${order.customer_name ?? order.table_no}」這筆訂單？`)) return
     await supabase.from('orders').delete().eq('id', order.id)
+    fetchOrders()
+  }
+
+  async function handleQuickUpdate(order: Order, patch: { table_no: string | null }) {
+    await supabase.from('orders').update(patch).eq('id', order.id)
     fetchOrders()
   }
 
@@ -435,12 +484,27 @@ export default function OrdersPage() {
 
       {/* action bar */}
       <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
-        <input
-          placeholder="搜尋姓名或電話…"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          className="w-48"
-        />
+        <div className="flex items-center gap-2 flex-wrap">
+          <input
+            placeholder="搜尋姓名或電話…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="w-40"
+          />
+          <div className="flex gap-1">
+            {(['全部', '中午', '晚上'] as const).map(p => (
+              <button
+                key={p}
+                onClick={() => setPeriodFilter(p)}
+                className={`px-3 py-1.5 text-sm rounded-lg border transition-colors ${
+                  periodFilter === p
+                    ? 'bg-gray-900 text-white border-gray-900'
+                    : 'bg-white border-gray-200 hover:bg-gray-100'
+                }`}
+              >{p}</button>
+            ))}
+          </div>
+        </div>
         <div className="flex gap-2">
           <button
             onClick={() => exportCSV(filtered, currentDate)}
@@ -479,6 +543,7 @@ export default function OrdersPage() {
             onToggle={() => handleToggle(order)}
             onEdit={() => startEdit(order)}
             onDelete={() => handleDelete(order)}
+            onQuickUpdate={patch => handleQuickUpdate(order, patch)}
           />
         ))}
       </div>
