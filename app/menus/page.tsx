@@ -174,6 +174,11 @@ export default function MenusPage() {
                       {selectedMenu.price>0 && <span className="ml-2 text-sm text-gray-400">${selectedMenu.price.toLocaleString()} / 桌</span>}
                     </div>
                     <div className="flex gap-1.5">
+                      <button
+                        onClick={() => window.open(`/print/menu/${selectedMenu.id}`, '_blank')}
+                        className="px-3 py-1.5 text-sm border border-gray-200 rounded-lg hover:bg-gray-100"
+                        title="列印 A4 桌卡（6格）"
+                      >🖨 列印</button>
                       <button onClick={()=>setMenuEdit({name:selectedMenu.name,price:String(selectedMenu.price)})}
                         className="px-3 py-1.5 text-sm border border-gray-200 rounded-lg hover:bg-gray-100">編輯</button>
                       <button onClick={()=>deleteMenu(selectedMenu.id)}
