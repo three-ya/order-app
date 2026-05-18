@@ -417,6 +417,11 @@ function OrderRow({ order, onToggle, onEdit, onDelete, onQuickUpdate }: {
         {om.length>0 && <div className="text-xs text-gray-300 mt-0.5">{om.length} 道菜</div>}
       </div>
       <div className="flex justify-end gap-1 pt-0.5">
+        <button
+          onClick={() => window.open(`/print/${order.id}`, '_blank', 'width=420,height=700')}
+          className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg"
+          title="列印"
+        >🖨</button>
         <button onClick={onEdit} className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg">✏️</button>
         <button onClick={onDelete} className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg">🗑</button>
       </div>
