@@ -419,7 +419,7 @@ function OrderRow({ order, onToggle, onEdit, onDelete, onQuickUpdate }: {
       <div className="flex justify-end gap-1 pt-0.5">
         <button
           onClick={() => window.open(`/print/${order.id}`, '_blank', 'width=420,height=700')}
-          className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg"
+          className="hidden sm:flex p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg"
           title="列印"
         >🖨</button>
         <button onClick={onEdit} className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg">✏️</button>
