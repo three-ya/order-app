@@ -33,33 +33,44 @@ function blankForm(date: string): OrderFormData {
 function exportCSV(orders: Order[], date: string) {
   const headers = ['確認','時間','桌位','姓名','單價','數量','菜色','調整','總計','電話','備註']
   const rows = orders.map(o => {
-    const menuText = (o.order_menu??[]).map(i=>`${i.name}${i.qty>1?'×'+i.qty:''}${i.price?'($'+i.price+')':''}${i.note?'['+i.note+']':''}`).join('、')
+    const menuText = (o.order_menu??[]).map(i=>`${i.name}${i.qty>1?'x'+i.qty:''}${i.price?'($'+i.price+')':''}${i.note?'['+i.note+']':''}`).join('、')
     const adjText  = (o.adjustments??[]).map(a=>`${a.name}:${a.amount}`).join(';')
-    return [o.confirmed?'✓':'',o.time_text??'',o.table_no??'',o.customer_name??'',
+    return [o.confirmed?'V':'',o.time_text??'',o.table_no??'',o.customer_name??'',
       o.unit_price,o.quantity,menuText,adjText,orderTotal(o),o.phone??'',o.note??'']
   })
-  const csv = [headers,...rows].map(r=>r.map(c=>{const s=String(c);return /[,"\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s}).join(',')).join('\n')
+  const csv = [headers,...rows].map(r=>r.map(c=>{
+    const s=String(c)
+    return /[,"\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s
+  }).join(',')).join('\n')
   const blob = new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8;'})
   const url = URL.createObjectURL(blob)
   const a = Object.assign(document.createElement('a'),{href:url,download:`訂單_${date}.csv`})
   document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url)
 }
 
-function OrderMenuSection({ menuId, menuType, value, onChange }: {
-  menuId: string|null; menuType: string; value: OrderMenuItem[]; onChange: (v: OrderMenuItem[]) => void
+// ─── OrderMenuSection ───────────────────────────────────────────
+// pickerMenuId: 固定用單點美食的 menu id 來做「從菜單加菜」的選單
+// menuId: 目前訂單選的菜單（決定 isDandan 和顯示方式）
+function OrderMenuSection({ menuId, menuType, pickerMenuId, value, onChange }: {
+  menuId: string|null
+  menuType: string
+  pickerMenuId: string|null
+  value: OrderMenuItem[]
+  onChange: (v: OrderMenuItem[]) => void
 }) {
   const supabase = createClient()
-  const [menuItems, setMenuItems] = useState<MenuItem[]>([])
+  const [pickerItems, setPickerItems] = useState<MenuItem[]>([])
   const [search, setSearch] = useState('')
   const [showPicker, setShowPicker] = useState(false)
   const pickerRef = useRef<HTMLDivElement>(null)
   const isDandan = menuType === '單點'
 
+  // 永遠從單點菜單載入選單，提供「從菜單加菜」
   useEffect(() => {
-    if (!menuId) { setMenuItems([]); return }
-    supabase.from('menu_items').select('*').eq('menu_id', menuId)
-      .order('sort_order').then(({ data }) => setMenuItems((data as MenuItem[])??[]))
-  }, [menuId])
+    if (!pickerMenuId) { setPickerItems([]); return }
+    supabase.from('menu_items').select('*').eq('menu_id', pickerMenuId)
+      .order('sort_order').then(({ data }) => setPickerItems((data as MenuItem[])??[]))
+  }, [pickerMenuId])
 
   useEffect(() => {
     function h(e: MouseEvent) {
@@ -69,78 +80,97 @@ function OrderMenuSection({ menuId, menuType, value, onChange }: {
     return () => document.removeEventListener('mousedown', h)
   }, [])
 
-  const filtered = search ? menuItems.filter(i=>i.name.includes(search)) : menuItems
+  const filtered = search ? pickerItems.filter(i=>i.name.includes(search)) : pickerItems
   const grouped = filtered.reduce((acc, item) => {
     const cat = item.category||'其他'
     if (!acc[cat]) acc[cat]=[]
     acc[cat].push(item); return acc
   }, {} as Record<string,MenuItem[]>)
 
-  function addItem(item: MenuItem) { onChange([...value,{name:item.name,price:item.price,qty:1,note:''}]); setSearch('') }
+  function addItem(item: MenuItem) {
+    // 單點訂單帶入實際價格；合菜訂單加入的額外單點也帶入價格
+    onChange([...value,{name:item.name, price:item.price, qty:1, note:''}])
+    setSearch('')
+  }
   function addBlank() { onChange([...value,{name:'',price:0,qty:1,note:''}]) }
   function remove(idx: number) { onChange(value.filter((_,i)=>i!==idx)) }
   function update(idx: number, field: keyof OrderMenuItem, v: string|number) {
     const next=[...value]; next[idx]={...next[idx],[field]:v}; onChange(next)
   }
-  const subtotal = value.reduce((s,i)=>s+(i.price??0)*(i.qty??1),0)
+
+  const menuSubtotal   = value.reduce((s,i)=>s+(i.price??0)*(i.qty??1),0)
+  const extraCount     = value.filter(i=>i.price>0).length
 
   return (
     <div>
       <div className="flex items-center justify-between mb-2">
-        <label className="text-xs text-gray-500">{isDandan?'點餐清單':'本次菜色（可調整）'}</label>
-        {isDandan && subtotal>0 && <span className="text-xs font-medium">{fmtMoney(subtotal)}</span>}
+        <label className="text-xs text-gray-500">
+          {isDandan ? '點餐清單' : '本次菜色（可調整・加入單點菜有標價）'}
+        </label>
+        {menuSubtotal>0 && (
+          <span className="text-xs text-gray-500">
+            {isDandan ? '' : `加點 ${extraCount} 道・`}
+            {fmtMoney(menuSubtotal)}
+          </span>
+        )}
       </div>
+
       {value.map((item,idx) => (
         <div key={idx} className="flex gap-1.5 items-center mb-1.5">
           <span className="text-xs text-gray-300 w-4 text-right shrink-0">{idx+1}</span>
           <input className="flex-1 !py-1 text-sm" value={item.name}
             onChange={e=>update(idx,'name',e.target.value)} placeholder="菜色名稱" />
-          {isDandan && <>
-            <input type="number" min={1} className="w-12 !py-1 text-center text-sm"
-              value={item.qty} onChange={e=>update(idx,'qty',parseInt(e.target.value)||1)} />
-            <input type="number" min={0} className="w-20 !py-1 text-right text-sm"
-              value={item.price||''} onChange={e=>update(idx,'price',parseInt(e.target.value)||0)} placeholder="金額" />
-          </>}
+          <input type="number" min={1} className="w-12 !py-1 text-center text-sm"
+            value={item.qty} onChange={e=>update(idx,'qty',parseInt(e.target.value)||1)} />
+          <input type="number" min={0} className="w-20 !py-1 text-right text-sm"
+            value={item.price||''} onChange={e=>update(idx,'price',parseInt(e.target.value)||0)}
+            placeholder={isDandan?'金額':'加價'} />
           <input className="w-20 !py-1 text-xs" value={item.note}
             onChange={e=>update(idx,'note',e.target.value)} placeholder="備註" />
           <button type="button" onClick={()=>remove(idx)}
             className="text-gray-300 hover:text-red-400 text-lg px-1 leading-none shrink-0">×</button>
         </div>
       ))}
+
       {isDandan && value.length>0 && (
         <div className="text-right text-xs text-gray-400 mb-2">
-          {value.filter(i=>i.price>0).length} 道有標價・合計 {fmtMoney(subtotal)}
+          {value.filter(i=>i.price>0).length} 道有標價・合計 {fmtMoney(menuSubtotal)}
         </div>
       )}
+
       <div className="flex gap-2 flex-wrap mt-2">
-        <div className="relative" ref={pickerRef}>
-          <button type="button" onClick={()=>setShowPicker(p=>!p)}
-            className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 hover:bg-gray-50">從菜單加菜</button>
-          {showPicker && (
-            <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-20 w-72 max-h-80 overflow-y-auto">
-              <div className="p-2 sticky top-0 bg-white border-b border-gray-100">
-                <input autoFocus className="!py-1.5 text-sm" placeholder="搜尋菜色…"
-                  value={search} onChange={e=>setSearch(e.target.value)} />
-              </div>
-              {Object.entries(grouped).map(([cat,items]) => (
-                <div key={cat}>
-                  <div className="px-3 py-1 text-xs text-gray-400 font-medium bg-gray-50">{cat}</div>
-                  {items.map(item => (
-                    <button key={item.id} type="button"
-                      onClick={()=>{addItem(item);setShowPicker(false)}}
-                      className="w-full flex items-center justify-between px-3 py-2 hover:bg-gray-50 text-sm text-left gap-2">
-                      <span className="flex-1">{item.name}</span>
-                      <span className="text-xs text-gray-400 shrink-0">
-                        {item.price>0 ? fmtMoney(item.price) : (item.note||'時價')}
-                      </span>
-                    </button>
-                  ))}
+        {pickerMenuId && (
+          <div className="relative" ref={pickerRef}>
+            <button type="button" onClick={()=>setShowPicker(p=>!p)}
+              className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 hover:bg-gray-50">
+              {isDandan ? '從單點菜單加菜' : '加入單點菜色'}
+            </button>
+            {showPicker && (
+              <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-20 w-72 max-h-80 overflow-y-auto">
+                <div className="p-2 sticky top-0 bg-white border-b border-gray-100">
+                  <input autoFocus className="!py-1.5 text-sm" placeholder="搜尋菜色…"
+                    value={search} onChange={e=>setSearch(e.target.value)} />
                 </div>
-              ))}
-              {Object.keys(grouped).length===0 && <p className="p-3 text-sm text-gray-400">找不到</p>}
-            </div>
-          )}
-        </div>
+                {Object.entries(grouped).map(([cat,items]) => (
+                  <div key={cat}>
+                    <div className="px-3 py-1 text-xs text-gray-400 font-medium bg-gray-50">{cat}</div>
+                    {items.map(item => (
+                      <button key={item.id} type="button"
+                        onClick={()=>{addItem(item);setShowPicker(false)}}
+                        className="w-full flex items-center justify-between px-3 py-2 hover:bg-gray-50 text-sm text-left gap-2">
+                        <span className="flex-1">{item.name}</span>
+                        <span className="text-xs text-gray-400 shrink-0">
+                          {item.price>0 ? fmtMoney(item.price) : (item.note||'時價')}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                ))}
+                {Object.keys(grouped).length===0 && <p className="p-3 text-sm text-gray-400">找不到</p>}
+              </div>
+            )}
+          </div>
+        )}
         <button type="button" onClick={addBlank}
           className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 hover:bg-gray-50">手動輸入</button>
         {value.length>0 && (
@@ -153,7 +183,7 @@ function OrderMenuSection({ menuId, menuType, value, onChange }: {
 }
 
 function AdjustmentsField({ value, onChange }: { value: Adjustment[]; onChange: (v: Adjustment[]) => void }) {
-  const add = () => onChange([...value,{name:'',amount:0}])
+  const add    = () => onChange([...value,{name:'',amount:0}])
   const remove = (i: number) => onChange(value.filter((_,idx)=>idx!==i))
   const update = (i: number, field: keyof Adjustment, v: string|number) => {
     const next=[...value]; next[i]={...next[i],[field]:v}; onChange(next)
@@ -185,6 +215,13 @@ function OrderForm({ initial, menus, onSave, onCancel }: {
   const [timeSpecific, setTimeSpecific] = useState(parsed.specific)
   const [saving, setSaving]         = useState(false)
   const [selectedMenu, setSelectedMenu] = useState<Menu|null>(menus.find(m=>m.id===initial.menu_id)??null)
+  // 單點菜單 ID（固定用來做「從菜單加菜」的來源）
+  const [dandanMenuId, setDandanMenuId] = useState<string|null>(null)
+
+  useEffect(() => {
+    supabase.from('menus').select('id').eq('menu_type','單點').limit(1)
+      .then(({ data }) => { if (data?.[0]) setDandanMenuId(data[0].id) })
+  }, [])
 
   function set(field: keyof OrderFormData, value: unknown) {
     setForm(f=>({...f,[field]:value}))
@@ -196,10 +233,16 @@ function OrderForm({ initial, menus, onSave, onCancel }: {
     setSelectedMenu(menu)
     if (menu) {
       if (menu.menu_type==='合菜' && menu.price) set('unit_price', menu.price)
-      if (menu.menu_type==='單點') set('unit_price', 0)
-      if (form.order_menu.length===0) {
-        const { data } = await supabase.from('menu_items').select('*').eq('menu_id', menuId!).order('sort_order')
-        set('order_menu', ((data as MenuItem[])??[]).map(i=>({name:i.name,price:i.price,qty:1,note:''})))
+      if (menu.menu_type==='單點') {
+        set('unit_price', 0)
+        set('order_menu', [])  // 單點：清空，讓使用者自己選
+        return
+      }
+      // 合菜：空的才自動載入（避免蓋掉已手動調整的菜色）
+      if (menu.menu_type==='合菜' && form.order_menu.length===0) {
+        const { data } = await supabase.from('menu_items').select('*')
+          .eq('menu_id', menuId!).order('sort_order')
+        set('order_menu', ((data as MenuItem[])??[]).map(i=>({name:i.name, price:0, qty:1, note:''})))
       }
     }
   }
@@ -210,6 +253,8 @@ function OrderForm({ initial, menus, onSave, onCancel }: {
     await onSave({...form, time_text:timeText})
     setSaving(false)
   }
+
+  const isDandan = selectedMenu?.menu_type === '單點'
 
   return (
     <form onSubmit={handleSubmit} className="bg-gray-50 border border-gray-200 rounded-xl p-5 space-y-4">
@@ -226,6 +271,7 @@ function OrderForm({ initial, menus, onSave, onCancel }: {
           </select>
         </div>
       )}
+
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <div>
           <label className="text-xs text-gray-500 block mb-1">桌位</label>
@@ -246,17 +292,18 @@ function OrderForm({ initial, menus, onSave, onCancel }: {
           <label className="text-xs text-gray-500 block mb-1">客戶姓名</label>
           <input placeholder="王先生" value={form.customer_name??''} onChange={e=>set('customer_name',e.target.value)} />
         </div>
-        {(!selectedMenu||selectedMenu.menu_type!=='單點') && <>
-          <div>
-            <label className="text-xs text-gray-500 block mb-1">單價</label>
-            <input type="number" placeholder="4000" value={form.unit_price||''} onChange={e=>set('unit_price',parseInt(e.target.value)||0)} />
-          </div>
-          <div>
-            <label className="text-xs text-gray-500 block mb-1">數量（桌）</label>
-            <input type="number" min={1} value={form.quantity} onChange={e=>set('quantity',parseInt(e.target.value)||1)} />
-          </div>
-        </>}
-        <div className={selectedMenu?.menu_type==='單點'?'col-span-2 sm:col-span-4':'col-span-2'}>
+        <div>
+          <label className="text-xs text-gray-500 block mb-1">
+            單價{selectedMenu?'（可手動修改）':''}
+          </label>
+          <input type="number" placeholder="4000" value={form.unit_price||''}
+            onChange={e=>set('unit_price',parseInt(e.target.value)||0)} />
+        </div>
+        <div>
+          <label className="text-xs text-gray-500 block mb-1">數量（桌）</label>
+          <input type="number" min={1} value={form.quantity} onChange={e=>set('quantity',parseInt(e.target.value)||1)} />
+        </div>
+        <div className="col-span-2">
           <label className="text-xs text-gray-500 block mb-1">電話</label>
           <input placeholder="0912345678" value={form.phone} onChange={e=>set('phone',e.target.value)} />
         </div>
@@ -266,16 +313,24 @@ function OrderForm({ initial, menus, onSave, onCancel }: {
             onChange={e=>set('note',e.target.value)} rows={2} style={{resize:'vertical'}} />
         </div>
       </div>
+
       {form.menu_id && (
         <div className="border-t border-gray-200 pt-4">
-          <OrderMenuSection menuId={form.menu_id} menuType={selectedMenu?.menu_type??'合菜'}
-            value={form.order_menu} onChange={v=>set('order_menu',v)} />
+          <OrderMenuSection
+            menuId={form.menu_id}
+            menuType={selectedMenu?.menu_type??'合菜'}
+            pickerMenuId={dandanMenuId}
+            value={form.order_menu}
+            onChange={v=>set('order_menu',v)}
+          />
         </div>
       )}
+
       <div className="border-t border-gray-200 pt-4">
         <label className="text-xs text-gray-500 block mb-2">調整項目（扣抵填負數）</label>
         <AdjustmentsField value={form.adjustments} onChange={v=>set('adjustments',v)} />
       </div>
+
       <div className="flex justify-end gap-2 pt-1">
         <button type="button" onClick={onCancel}
           className="px-4 py-2 text-sm rounded-lg border border-gray-200 hover:bg-gray-100">取消</button>
@@ -310,7 +365,7 @@ function OrderRow({ order, onToggle, onEdit, onDelete, onQuickUpdate }: {
   return (
     <div className={`grid grid-cols-[28px_1fr_100px_64px] gap-3 px-4 py-3 border-b border-gray-100 last:border-0 items-start ${!order.confirmed?'opacity-60':''}`}>
       <button onClick={onToggle}
-        className={`w-[22px] h-[22px] rounded-full border mt-0.5 flex items-center justify-center text-xs shrink-0 ${order.confirmed?'bg-green-50 border-green-400 text-green-600':'border-gray-300 text-transparent hover:border-gray-500'}`}>✓</button>
+        className={`w-[22px] h-[22px] rounded-full border mt-0.5 flex items-center justify-center text-xs shrink-0 ${order.confirmed?'bg-green-50 border-green-400 text-green-600':'border-gray-300 text-transparent hover:border-gray-500'}`}>V</button>
       <div>
         <div className="flex flex-wrap items-center gap-1.5">
           {editingTable ? (
@@ -337,7 +392,7 @@ function OrderRow({ order, onToggle, onEdit, onDelete, onQuickUpdate }: {
             {om.map((i,idx)=>(
               <div key={idx} className="text-xs text-gray-500 flex gap-2">
                 <span className="text-gray-300 shrink-0">{idx+1}.</span>
-                <span className="flex-1">{i.name}{i.qty>1?` ×${i.qty}`:''}</span>
+                <span className="flex-1">{i.name}{i.qty>1?` x${i.qty}`:''}</span>
                 {i.price>0 && <span className="text-gray-400 shrink-0">{fmtMoney(i.price*i.qty)}</span>}
                 {i.note && <span className="text-gray-400">[{i.note}]</span>}
               </div>
@@ -348,7 +403,7 @@ function OrderRow({ order, onToggle, onEdit, onDelete, onQuickUpdate }: {
       <div className="text-right cursor-pointer select-none" onClick={()=>setShowBreakdown(b=>!b)} title="點擊展開明細">
         {showBreakdown ? (
           <>
-            {order.unit_price>0 && <div className="text-xs text-gray-400 font-mono">{order.unit_price.toLocaleString()} × {order.quantity}</div>}
+            {order.unit_price>0 && <div className="text-xs text-gray-400 font-mono">{order.unit_price.toLocaleString()} x {order.quantity}</div>}
             {adjs.map((a,i)=>(
               <div key={i} className={`text-xs font-mono ${a.amount<0?'text-red-400':'text-gray-400'}`}>
                 {a.amount>=0?'+':'−'} {fmtMoney(a.amount)}
@@ -387,7 +442,7 @@ export default function OrdersPage() {
       if (!user) return
       supabase.from('profiles').select('*').eq('id',user.id).single().then(({data})=>setProfile(data))
     })
-    supabase.from('menus').select('*').order('price',{ascending:true})
+    supabase.from('menus').select('*').order('menu_type').order('price',{ascending:true})
       .then(({data})=>setMenus((data as Menu[])??[]))
   },[])
 
@@ -426,7 +481,9 @@ export default function OrdersPage() {
     else             await supabase.from('orders').insert(payload)
     setShowForm(false);setEditingOrder(null);fetchOrders()
   }
-  async function handleToggle(o:Order){await supabase.from('orders').update({confirmed:!o.confirmed}).eq('id',o.id);fetchOrders()}
+  async function handleToggle(o:Order){
+    await supabase.from('orders').update({confirmed:!o.confirmed}).eq('id',o.id);fetchOrders()
+  }
   async function handleDelete(o:Order){
     if(!confirm(`確定刪除「${o.customer_name??o.table_no}」？`))return
     await supabase.from('orders').delete().eq('id',o.id);fetchOrders()
