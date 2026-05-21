@@ -306,19 +306,28 @@ function OrderRow({ order, showAmounts, onToggle, onEdit, onDelete, onQuickUpdat
   order: Order
   showAmounts: boolean
   onToggle: ()=>void; onEdit: ()=>void; onDelete: ()=>void
-  onQuickUpdate: (p:{table_no:string|null})=>void
+  onQuickUpdate: (p:{table_no?:string|null; quantity?:number})=>void
 }) {
   const om    = order.order_menu??[]
   const total = orderTotal(order)
   const [editingTable, setEditingTable] = useState(false)
   const [tableVal, setTableVal]         = useState(order.table_no??'')
+  const [editingQty, setEditingQty]     = useState(false)
+  const [qtyVal, setQtyVal]             = useState(String(order.quantity??1))
 
   useEffect(()=>{setTableVal(order.table_no??'')},[order.table_no])
+  useEffect(()=>{setQtyVal(String(order.quantity??1))},[order.quantity])
 
   function saveTable() {
     const next = tableVal.trim()||null
     if (next!==(order.table_no??null)) onQuickUpdate({table_no:next})
     setEditingTable(false)
+  }
+
+  function saveQty() {
+    const next = parseInt(qtyVal)||1
+    if (next !== order.quantity) onQuickUpdate({quantity:next})
+    setEditingQty(false)
   }
 
   // 動態 grid：顯示金額時 4 欄，否則 3 欄
@@ -353,6 +362,23 @@ function OrderRow({ order, showAmounts, onToggle, onEdit, onDelete, onQuickUpdat
           )}
           {order.time_text && <span className="text-xs bg-blue-50 text-blue-600 rounded px-2 py-0.5">🕐 {order.time_text}</span>}
           <span className="font-medium text-sm">{order.customer_name||'（未填）'}</span>
+          {/* 桌數快速編輯 */}
+          {editingQty ? (
+            <input
+              autoFocus type="number" min={1}
+              className="w-12 !py-0.5 !px-1 text-center text-xs !rounded"
+              value={qtyVal}
+              onChange={e=>setQtyVal(e.target.value)}
+              onBlur={saveQty}
+              onKeyDown={e=>{if(e.key==='Enter')saveQty();if(e.key==='Escape')setEditingQty(false)}}
+            />
+          ) : (
+            <span
+              onClick={()=>setEditingQty(true)}
+              className="text-xs border border-gray-200 rounded px-2 py-0.5 cursor-pointer hover:bg-gray-100 text-gray-500 transition-colors"
+              title="點擊快速編輯桌數"
+            >{order.quantity} 桌</span>
+          )}
         </div>
         {(order.phone||order.note) && (
           <div className="flex flex-wrap gap-3 mt-1 text-xs text-gray-500">
@@ -472,7 +498,7 @@ export default function OrdersPage() {
     if(!confirm(`確定刪除「${o.customer_name??o.table_no}」？`))return
     await supabase.from('orders').delete().eq('id',o.id);fetchOrders()
   }
-  async function handleQuickUpdate(o:Order,patch:{table_no:string|null}){
+  async function handleQuickUpdate(o:Order,patch:{table_no?:string|null; quantity?:number}){
     await supabase.from('orders').update(patch).eq('id',o.id);fetchOrders()
   }
   async function handleLogout(){await supabase.auth.signOut();router.push('/login')}
@@ -570,7 +596,7 @@ export default function OrdersPage() {
                 onToggle={()=>handleToggle(order)}
                 onEdit={()=>{setEditingOrder(order);setShowForm(true)}}
                 onDelete={()=>handleDelete(order)}
-                onQuickUpdate={patch=>handleQuickUpdate(order,patch)}
+                onQuickUpdate={(patch)=>handleQuickUpdate(order,patch)}
               />
             ))
         }
