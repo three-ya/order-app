@@ -49,14 +49,9 @@ function exportCSV(orders: Order[], date: string) {
 }
 
 // ─── OrderMenuSection ───────────────────────────────────────────
-// pickerMenuId: 固定用單點美食的 menu id 來做「從菜單加菜」的選單
-// menuId: 目前訂單選的菜單（決定 isDandan 和顯示方式）
 function OrderMenuSection({ menuId, menuType, pickerMenuId, value, onChange }: {
-  menuId: string|null
-  menuType: string
-  pickerMenuId: string|null
-  value: OrderMenuItem[]
-  onChange: (v: OrderMenuItem[]) => void
+  menuId: string|null; menuType: string; pickerMenuId: string|null
+  value: OrderMenuItem[]; onChange: (v: OrderMenuItem[]) => void
 }) {
   const supabase = createClient()
   const [pickerItems, setPickerItems] = useState<MenuItem[]>([])
@@ -65,7 +60,6 @@ function OrderMenuSection({ menuId, menuType, pickerMenuId, value, onChange }: {
   const pickerRef = useRef<HTMLDivElement>(null)
   const isDandan = menuType === '單點'
 
-  // 永遠從單點菜單載入選單，提供「從菜單加菜」
   useEffect(() => {
     if (!pickerMenuId) { setPickerItems([]); return }
     supabase.from('menu_items').select('*').eq('menu_id', pickerMenuId)
@@ -87,34 +81,20 @@ function OrderMenuSection({ menuId, menuType, pickerMenuId, value, onChange }: {
     acc[cat].push(item); return acc
   }, {} as Record<string,MenuItem[]>)
 
-  function addItem(item: MenuItem) {
-    // 單點訂單帶入實際價格；合菜訂單加入的額外單點也帶入價格
-    onChange([...value,{name:item.name, price:item.price, qty:1, note:''}])
-    setSearch('')
-  }
+  function addItem(item: MenuItem) { onChange([...value,{name:item.name, price:item.price, qty:1, note:''}]); setSearch('') }
   function addBlank() { onChange([...value,{name:'',price:0,qty:1,note:''}]) }
   function remove(idx: number) { onChange(value.filter((_,i)=>i!==idx)) }
   function update(idx: number, field: keyof OrderMenuItem, v: string|number) {
     const next=[...value]; next[idx]={...next[idx],[field]:v}; onChange(next)
   }
-
-  const menuSubtotal   = value.reduce((s,i)=>s+(i.price??0)*(i.qty??1),0)
-  const extraCount     = value.filter(i=>i.price>0).length
+  const menuSubtotal = value.reduce((s,i)=>s+(i.price??0)*(i.qty??1),0)
 
   return (
     <div>
       <div className="flex items-center justify-between mb-2">
-        <label className="text-xs text-gray-500">
-          {isDandan ? '點餐清單' : '本次菜色（可調整・加入單點菜有標價）'}
-        </label>
-        {menuSubtotal>0 && (
-          <span className="text-xs text-gray-500">
-            {isDandan ? '' : `加點 ${extraCount} 道・`}
-            {fmtMoney(menuSubtotal)}
-          </span>
-        )}
+        <label className="text-xs text-gray-500">{isDandan?'點餐清單':'本次菜色（可調整・加入單點菜有標價）'}</label>
+        {menuSubtotal>0 && <span className="text-xs text-gray-500">{fmtMoney(menuSubtotal)}</span>}
       </div>
-
       {value.map((item,idx) => (
         <div key={idx} className="flex gap-1.5 items-center mb-1.5">
           <span className="text-xs text-gray-300 w-4 text-right shrink-0">{idx+1}</span>
@@ -131,19 +111,17 @@ function OrderMenuSection({ menuId, menuType, pickerMenuId, value, onChange }: {
             className="text-gray-300 hover:text-red-400 text-lg px-1 leading-none shrink-0">×</button>
         </div>
       ))}
-
       {isDandan && value.length>0 && (
         <div className="text-right text-xs text-gray-400 mb-2">
           {value.filter(i=>i.price>0).length} 道有標價・合計 {fmtMoney(menuSubtotal)}
         </div>
       )}
-
       <div className="flex gap-2 flex-wrap mt-2">
         {pickerMenuId && (
           <div className="relative" ref={pickerRef}>
             <button type="button" onClick={()=>setShowPicker(p=>!p)}
               className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 hover:bg-gray-50">
-              {isDandan ? '從單點菜單加菜' : '加入單點菜色'}
+              {isDandan?'從單點菜單加菜':'加入單點菜色'}
             </button>
             {showPicker && (
               <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-20 w-72 max-h-80 overflow-y-auto">
@@ -160,7 +138,7 @@ function OrderMenuSection({ menuId, menuType, pickerMenuId, value, onChange }: {
                         className="w-full flex items-center justify-between px-3 py-2 hover:bg-gray-50 text-sm text-left gap-2">
                         <span className="flex-1">{item.name}</span>
                         <span className="text-xs text-gray-400 shrink-0">
-                          {item.price>0 ? fmtMoney(item.price) : (item.note||'時價')}
+                          {item.price>0?fmtMoney(item.price):(item.note||'時價')}
                         </span>
                       </button>
                     ))}
@@ -215,7 +193,6 @@ function OrderForm({ initial, menus, onSave, onCancel }: {
   const [timeSpecific, setTimeSpecific] = useState(parsed.specific)
   const [saving, setSaving]         = useState(false)
   const [selectedMenu, setSelectedMenu] = useState<Menu|null>(menus.find(m=>m.id===initial.menu_id)??null)
-  // 單點菜單 ID（固定用來做「從菜單加菜」的來源）
   const [dandanMenuId, setDandanMenuId] = useState<string|null>(null)
 
   useEffect(() => {
@@ -233,16 +210,10 @@ function OrderForm({ initial, menus, onSave, onCancel }: {
     setSelectedMenu(menu)
     if (menu) {
       if (menu.menu_type==='合菜' && menu.price) set('unit_price', menu.price)
-      if (menu.menu_type==='單點') {
-        set('unit_price', 0)
-        set('order_menu', [])  // 單點：清空，讓使用者自己選
-        return
-      }
-      // 合菜：空的才自動載入（避免蓋掉已手動調整的菜色）
+      if (menu.menu_type==='單點') { set('unit_price', 0); set('order_menu', []); return }
       if (menu.menu_type==='合菜' && form.order_menu.length===0) {
-        const { data } = await supabase.from('menu_items').select('*')
-          .eq('menu_id', menuId!).order('sort_order')
-        set('order_menu', ((data as MenuItem[])??[]).map(i=>({name:i.name, price:0, qty:1, note:''})))
+        const { data } = await supabase.from('menu_items').select('*').eq('menu_id', menuId!).order('sort_order')
+        set('order_menu', ((data as MenuItem[])??[]).map(i=>({name:i.name,price:0,qty:1,note:''})))
       }
     }
   }
@@ -253,8 +224,6 @@ function OrderForm({ initial, menus, onSave, onCancel }: {
     await onSave({...form, time_text:timeText})
     setSaving(false)
   }
-
-  const isDandan = selectedMenu?.menu_type === '單點'
 
   return (
     <form onSubmit={handleSubmit} className="bg-gray-50 border border-gray-200 rounded-xl p-5 space-y-4">
@@ -271,7 +240,6 @@ function OrderForm({ initial, menus, onSave, onCancel }: {
           </select>
         </div>
       )}
-
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <div>
           <label className="text-xs text-gray-500 block mb-1">桌位</label>
@@ -293,9 +261,7 @@ function OrderForm({ initial, menus, onSave, onCancel }: {
           <input placeholder="王先生" value={form.customer_name??''} onChange={e=>set('customer_name',e.target.value)} />
         </div>
         <div>
-          <label className="text-xs text-gray-500 block mb-1">
-            單價{selectedMenu?'（可手動修改）':''}
-          </label>
+          <label className="text-xs text-gray-500 block mb-1">單價{selectedMenu?' (可修改)':''}</label>
           <input type="number" placeholder="4000" value={form.unit_price||''}
             onChange={e=>set('unit_price',parseInt(e.target.value)||0)} />
         </div>
@@ -313,24 +279,16 @@ function OrderForm({ initial, menus, onSave, onCancel }: {
             onChange={e=>set('note',e.target.value)} rows={2} style={{resize:'vertical'}} />
         </div>
       </div>
-
       {form.menu_id && (
         <div className="border-t border-gray-200 pt-4">
-          <OrderMenuSection
-            menuId={form.menu_id}
-            menuType={selectedMenu?.menu_type??'合菜'}
-            pickerMenuId={dandanMenuId}
-            value={form.order_menu}
-            onChange={v=>set('order_menu',v)}
-          />
+          <OrderMenuSection menuId={form.menu_id} menuType={selectedMenu?.menu_type??'合菜'}
+            pickerMenuId={dandanMenuId} value={form.order_menu} onChange={v=>set('order_menu',v)} />
         </div>
       )}
-
       <div className="border-t border-gray-200 pt-4">
         <label className="text-xs text-gray-500 block mb-2">調整項目（扣抵填負數）</label>
         <AdjustmentsField value={form.adjustments} onChange={v=>set('adjustments',v)} />
       </div>
-
       <div className="flex justify-end gap-2 pt-1">
         <button type="button" onClick={onCancel}
           className="px-4 py-2 text-sm rounded-lg border border-gray-200 hover:bg-gray-100">取消</button>
@@ -343,16 +301,17 @@ function OrderForm({ initial, menus, onSave, onCancel }: {
   )
 }
 
-function OrderRow({ order, onToggle, onEdit, onDelete, onQuickUpdate }: {
-  order: Order; onToggle: ()=>void; onEdit: ()=>void; onDelete: ()=>void
+// ─── OrderRow ───────────────────────────────────────────────────
+function OrderRow({ order, showAmounts, onToggle, onEdit, onDelete, onQuickUpdate }: {
+  order: Order
+  showAmounts: boolean
+  onToggle: ()=>void; onEdit: ()=>void; onDelete: ()=>void
   onQuickUpdate: (p:{table_no:string|null})=>void
 }) {
-  const adjs  = order.adjustments??[]
   const om    = order.order_menu??[]
   const total = orderTotal(order)
-  const [showBreakdown, setShowBreakdown] = useState(false)
-  const [editingTable, setEditingTable]   = useState(false)
-  const [tableVal, setTableVal]           = useState(order.table_no??'')
+  const [editingTable, setEditingTable] = useState(false)
+  const [tableVal, setTableVal]         = useState(order.table_no??'')
 
   useEffect(()=>{setTableVal(order.table_no??'')},[order.table_no])
 
@@ -362,10 +321,24 @@ function OrderRow({ order, onToggle, onEdit, onDelete, onQuickUpdate }: {
     setEditingTable(false)
   }
 
+  // 動態 grid：顯示金額時 4 欄，否則 3 欄
+  const gridCols = showAmounts
+    ? '28px 1fr 100px 92px'
+    : '28px 1fr 92px'
+
   return (
-    <div className={`grid grid-cols-[28px_1fr_100px_64px] gap-3 px-4 py-3 border-b border-gray-100 last:border-0 items-start ${!order.confirmed?'opacity-60':''}`}>
+    <div
+      style={{ display:'grid', gridTemplateColumns:gridCols, gap:'12px', alignItems:'start' }}
+      className={`px-4 py-3 border-b border-gray-100 last:border-0 ${!order.confirmed?'opacity-60':''}`}
+    >
+      {/* 確認圓圈 */}
       <button onClick={onToggle}
-        className={`w-[22px] h-[22px] rounded-full border mt-0.5 flex items-center justify-center text-xs shrink-0 ${order.confirmed?'bg-green-50 border-green-400 text-green-600':'border-gray-300 text-transparent hover:border-gray-500'}`}>V</button>
+        className={`w-[22px] h-[22px] rounded-full border mt-0.5 flex items-center justify-center text-xs shrink-0 ${
+          order.confirmed?'bg-green-50 border-green-400 text-green-600':'border-gray-300 text-transparent hover:border-gray-500'}`}>
+        V
+      </button>
+
+      {/* 內容 */}
       <div>
         <div className="flex flex-wrap items-center gap-1.5">
           {editingTable ? (
@@ -387,51 +360,56 @@ function OrderRow({ order, onToggle, onEdit, onDelete, onQuickUpdate }: {
             {order.note && <span className="whitespace-pre-wrap">📝 {order.note}</span>}
           </div>
         )}
-        {showBreakdown && om.length>0 && (
+        {showAmounts && om.length>0 && (
           <div className="mt-2 space-y-0.5">
             {om.map((i,idx)=>(
               <div key={idx} className="text-xs text-gray-500 flex gap-2">
                 <span className="text-gray-300 shrink-0">{idx+1}.</span>
                 <span className="flex-1">{i.name}{i.qty>1?` x${i.qty}`:''}</span>
-                {i.price>0 && <span className="text-gray-400 shrink-0">{fmtMoney(i.price*i.qty)}</span>}
-                {i.note && <span className="text-gray-400">[{i.note}]</span>}
+                {i.price>0&&<span className="text-gray-400 shrink-0">{fmtMoney(i.price*i.qty)}</span>}
+                {i.note&&<span className="text-gray-400">[{i.note}]</span>}
               </div>
             ))}
           </div>
         )}
       </div>
-      <div className="text-right cursor-pointer select-none" onClick={()=>setShowBreakdown(b=>!b)} title="點擊展開明細">
-        {showBreakdown ? (
-          <>
-            {order.unit_price>0 && <div className="text-xs text-gray-400 font-mono">{order.unit_price.toLocaleString()} x {order.quantity}</div>}
-            {adjs.map((a,i)=>(
-              <div key={i} className={`text-xs font-mono ${a.amount<0?'text-red-400':'text-gray-400'}`}>
-                {a.amount>=0?'+':'−'} {fmtMoney(a.amount)}
-              </div>
-            ))}
-            <div className="text-sm font-medium mt-0.5 text-blue-600 underline decoration-dotted">{fmtMoney(total)}</div>
-          </>
-        ) : (
-          <div className="text-sm font-medium underline decoration-dotted text-gray-700">{fmtMoney(total)}</div>
-        )}
-        {om.length>0 && <div className="text-xs text-gray-300 mt-0.5">{om.length} 道菜</div>}
-      </div>
+
+      {/* 金額（只在 showAmounts 時顯示） */}
+      {showAmounts && (
+        <div className="text-right">
+          {order.unit_price>0 && (
+            <div className="text-xs text-gray-400 font-mono">
+              {order.unit_price.toLocaleString()} x {order.quantity}
+            </div>
+          )}
+          {(order.adjustments??[]).map((a,i)=>(
+            <div key={i} className={`text-xs font-mono ${a.amount<0?'text-red-400':'text-gray-400'}`}>
+              {a.amount>=0?'+':'−'} {fmtMoney(a.amount)}
+            </div>
+          ))}
+          <div className="text-sm font-medium mt-0.5">{fmtMoney(total)}</div>
+          {om.length>0 && <div className="text-xs text-gray-300 mt-0.5">{om.length} 道菜</div>}
+        </div>
+      )}
+
+      {/* 操作 */}
       <div className="flex justify-end gap-1 pt-0.5">
         <button
           onClick={() => window.open(`/print/${order.id}`, '_blank', 'width=420,height=700')}
           className="hidden sm:flex p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg"
-          title="列印"
-        >🖨</button>
-        <button onClick={onEdit} className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg">✏️</button>
+          title="列印">🖨</button>
+        <button onClick={onEdit}   className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg">✏️</button>
         <button onClick={onDelete} className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg">🗑</button>
       </div>
     </div>
   )
 }
 
+// ─── Main Page ──────────────────────────────────────────────────
 export default function OrdersPage() {
   const supabase = createClient()
   const router   = useRouter()
+
   const [currentDate,setCurrentDate]   = useState(toLocalDate(new Date()))
   const [orders,setOrders]             = useState<Order[]>([])
   const [menus,setMenus]               = useState<Menu[]>([])
@@ -439,6 +417,7 @@ export default function OrdersPage() {
   const [loading,setLoading]           = useState(true)
   const [search,setSearch]             = useState('')
   const [periodFilter,setPeriodFilter] = useState<'全部'|'中午'|'晚上'>('全部')
+  const [showAmounts,setShowAmounts]   = useState(false)   // 全域金額顯示開關
   const [showForm,setShowForm]         = useState(false)
   const [editingOrder,setEditingOrder] = useState<Order|null>(null)
 
@@ -509,6 +488,8 @@ export default function OrdersPage() {
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-6">
+
+      {/* 頂部導覽 */}
       <div className="flex items-center justify-between mb-6 gap-4 flex-wrap">
         <span className="text-base font-medium">訂位管理</span>
         <div className="flex items-center gap-2">
@@ -523,27 +504,43 @@ export default function OrdersPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-3 mb-5">
-        {[{label:'訂單數',value:filtered.length},{label:'已確認',value:`${confirmedCnt} / ${filtered.length}`},{label:'總金額',value:fmtMoney(totalAmount)}]
-          .map(({label,value})=>(
-            <div key={label} className="bg-white border border-gray-100 rounded-xl p-3">
-              <div className="text-xs text-gray-400 mb-1">{label}</div>
-              <div className="text-xl font-medium">{value}</div>
-            </div>
-          ))}
+      {/* 統計卡（訂單數 + 已確認，金額用按鈕控制） */}
+      <div className="grid grid-cols-2 gap-3 mb-5">
+        <div className="bg-white border border-gray-100 rounded-xl p-3">
+          <div className="text-xs text-gray-400 mb-1">訂單數</div>
+          <div className="text-xl font-medium">{filtered.length}</div>
+        </div>
+        <div className="bg-white border border-gray-100 rounded-xl p-3">
+          <div className="text-xs text-gray-400 mb-1">已確認</div>
+          <div className="text-xl font-medium">{confirmedCnt} / {filtered.length}</div>
+        </div>
       </div>
 
+      {/* 操作列 */}
       <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
         <div className="flex items-center gap-2 flex-wrap">
-          <input placeholder="搜尋姓名或電話…" value={search} onChange={e=>setSearch(e.target.value)} className="w-40" />
+          <input placeholder="搜尋姓名或電話…" value={search}
+            onChange={e=>setSearch(e.target.value)} className="w-40" />
           <div className="flex gap-1">
             {(['全部','中午','晚上'] as const).map(p=>(
               <button key={p} onClick={()=>setPeriodFilter(p)}
-                className={`px-3 py-1.5 text-sm rounded-lg border transition-colors ${periodFilter===p?'bg-gray-900 text-white border-gray-900':'bg-white border-gray-200 hover:bg-gray-100'}`}>{p}</button>
+                className={`px-3 py-1.5 text-sm rounded-lg border transition-colors ${
+                  periodFilter===p?'bg-gray-900 text-white border-gray-900':'bg-white border-gray-200 hover:bg-gray-100'}`}>{p}</button>
             ))}
           </div>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
+          {/* 金額顯示切換 — 啟用時顯示今日總金額 */}
+          <button
+            onClick={()=>setShowAmounts(s=>!s)}
+            className={`px-3 py-2 text-sm rounded-lg border transition-colors ${
+              showAmounts
+                ? 'bg-gray-900 text-white border-gray-900'
+                : 'bg-white border-gray-200 hover:bg-gray-100'
+            }`}
+          >
+            {showAmounts ? `今日 ${fmtMoney(totalAmount)}` : '顯示金額'}
+          </button>
           <button onClick={()=>exportCSV(filtered,currentDate)}
             className="px-3 py-2 text-sm rounded-lg border border-gray-200 hover:bg-gray-100">匯出 CSV</button>
           <button onClick={()=>{setEditingOrder(null);setShowForm(true)}}
@@ -551,6 +548,7 @@ export default function OrdersPage() {
         </div>
       </div>
 
+      {/* 新增/編輯表單 */}
       {showForm && (
         <div className="mb-4">
           <OrderForm initial={formInitial} menus={menus} onSave={handleSave}
@@ -558,17 +556,26 @@ export default function OrdersPage() {
         </div>
       )}
 
+      {/* 訂單列表 */}
       <div className="bg-white border border-gray-100 rounded-xl overflow-hidden">
-        {loading ? <div className="py-12 text-center text-sm text-gray-400">載入中…</div>
-        : filtered.length===0 ? <div className="py-12 text-center text-sm text-gray-400">{search?'找不到符合的訂單':'這天還沒有訂單'}</div>
-        : filtered.map(order=>(
-          <OrderRow key={order.id} order={order}
-            onToggle={()=>handleToggle(order)}
-            onEdit={()=>{setEditingOrder(order);setShowForm(true)}}
-            onDelete={()=>handleDelete(order)}
-            onQuickUpdate={patch=>handleQuickUpdate(order,patch)} />
-        ))}
+        {loading
+          ? <div className="py-12 text-center text-sm text-gray-400">載入中…</div>
+          : filtered.length===0
+            ? <div className="py-12 text-center text-sm text-gray-400">{search?'找不到符合的訂單':'這天還沒有訂單'}</div>
+            : filtered.map(order=>(
+              <OrderRow
+                key={order.id}
+                order={order}
+                showAmounts={showAmounts}
+                onToggle={()=>handleToggle(order)}
+                onEdit={()=>{setEditingOrder(order);setShowForm(true)}}
+                onDelete={()=>handleDelete(order)}
+                onQuickUpdate={patch=>handleQuickUpdate(order,patch)}
+              />
+            ))
+        }
       </div>
+
     </div>
   )
 }
