@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import Link from 'next/link'
+import BottomNav from '@/components/BottomNav'
 import { createClient } from '@/lib/supabase/client'
 import type { Menu, MenuItem } from '@/lib/types'
 
@@ -94,10 +94,9 @@ export default function MenusPage() {
   const dandan = menus.filter(m=>m.menu_type==='單點')
 
   return (
-    <div className="max-w-3xl mx-auto px-4 py-6">
+    <div className="max-w-3xl mx-auto px-4 py-6 pb-24">
       <div className="flex items-center justify-between mb-6 gap-4 flex-wrap">
         <div className="flex items-center gap-3">
-          <Link href="/orders" className="text-sm text-gray-400 hover:text-gray-700">← 返回訂單</Link>
           <span className="text-base font-medium">菜單管理</span>
         </div>
         <div className="flex gap-2">
@@ -239,6 +238,7 @@ export default function MenusPage() {
           )}
         </div>
       )}
+      <BottomNav />
     </div>
   )
 }
