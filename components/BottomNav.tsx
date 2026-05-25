@@ -29,7 +29,8 @@ export default function BottomNav() {
   }
 
   return (
-    <>
+    // sm:hidden — 桌機版不顯示底部導覽，改由頁面頂部的導覽列處理
+    <div className="sm:hidden">
       {/* 遮罩 */}
       <div
         onClick={() => setShowSettings(false)}
@@ -38,7 +39,7 @@ export default function BottomNav() {
         }`}
       />
 
-      {/* 設定面板（從底部滑出） */}
+      {/* 設定面板 */}
       <div
         className={`fixed bottom-0 left-0 right-0 bg-white rounded-t-2xl z-50 transition-transform duration-300 ${
           showSettings ? 'translate-y-0' : 'translate-y-full'
@@ -46,10 +47,7 @@ export default function BottomNav() {
         style={{ borderTop: '0.5px solid #f3f4f6', boxShadow: '0 -4px 20px rgba(0,0,0,0.08)' }}
       >
         <div className="px-5 pt-4 pb-10">
-          {/* 拉桿 */}
           <div className="w-10 h-1 bg-gray-200 rounded-full mx-auto mb-5" />
-
-          {/* 使用者資訊 */}
           <div className="flex items-center gap-3 mb-5 pb-5 border-b border-gray-100">
             <div className="w-11 h-11 rounded-full bg-gray-100 border border-gray-200 flex items-center justify-center text-lg font-medium text-gray-700">
               {profile?.name?.[0] ?? '?'}
@@ -61,8 +59,6 @@ export default function BottomNav() {
               </div>
             </div>
           </div>
-
-          {/* 登出 */}
           <button
             onClick={handleLogout}
             className="w-full flex items-center gap-3 py-3 text-sm text-red-500 bg-transparent border-none cursor-pointer"
@@ -95,7 +91,6 @@ export default function BottomNav() {
             </Link>
           )
         })}
-
         <button
           onClick={() => setShowSettings(s => !s)}
           className="flex-1 flex flex-col items-center pt-2.5 pb-3 gap-1 bg-transparent border-none cursor-pointer transition-colors"
@@ -105,6 +100,6 @@ export default function BottomNav() {
           設定
         </button>
       </nav>
-    </>
+    </div>
   )
 }
