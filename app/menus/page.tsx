@@ -1,12 +1,16 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
+import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import BottomNav from '@/components/BottomNav'
 import { createClient } from '@/lib/supabase/client'
-import type { Menu, MenuItem } from '@/lib/types'
+import type { Menu, MenuItem, Profile } from '@/lib/types'
 
 export default function MenusPage() {
   const supabase = createClient()
+  const router = useRouter()
+  const [profile, setProfile]       = useState<Profile|null>(null)
   const [menus, setMenus]           = useState<Menu[]>([])
   const [selectedId, setSelectedId] = useState<string|null>(null)
   const [items, setItems]           = useState<MenuItem[]>([])
@@ -17,6 +21,19 @@ export default function MenusPage() {
   const [addingItem, setAddingItem] = useState(false)
   const [newItemName, setNewItemName] = useState('')
   const newItemRef = useRef<HTMLInputElement>(null)
+
+  useEffect(()=>{
+    supabase.auth.getUser().then(({data:{user}})=>{
+      if (!user) return
+      supabase.from('profiles').select('*').eq('id',user.id).single()
+        .then(({data})=>setProfile(data as Profile))
+    })
+  },[])
+
+  async function handleLogout(){
+    await supabase.auth.signOut()
+    router.push('/login')
+  }
 
   async function fetchMenus() {
     const {data} = await supabase.from('menus').select('*').order('menu_type').order('price',{ascending:true})
@@ -98,6 +115,13 @@ export default function MenusPage() {
       <div className="flex items-center justify-between mb-6 gap-4 flex-wrap">
         <div className="flex items-center gap-3">
           <span className="text-base font-medium">菜單管理</span>
+        </div>
+        {/* 桌機版導覽 */}
+        <div className="hidden sm:flex items-center gap-4 text-sm text-gray-500">
+          <Link href="/orders" className="hover:text-gray-900">訂單管理</Link>
+          <span className="text-gray-300">|</span>
+          <span className="text-gray-600">{profile?.name}</span>
+          <button onClick={handleLogout} className="hover:text-gray-900 bg-transparent border-none cursor-pointer text-sm text-gray-500">登出</button>
         </div>
         <div className="flex gap-2">
           <button onClick={()=>addMenu('合菜')}
