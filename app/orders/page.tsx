@@ -7,11 +7,16 @@ import { createClient } from '@/lib/supabase/client'
 import BottomNav from '@/components/BottomNav'
 import type { Order, OrderFormData, Adjustment, OrderMenuItem, Profile, Menu, MenuItem } from '@/lib/types'
 
+// ─── helpers ────────────────────────────────────────────────────
 const WEEKDAYS = ['日','一','二','三','四','五','六']
 function toLocalDate(d: Date) { return d.toLocaleDateString('sv-SE') }
 function fmtDate(s: string) {
   const d = new Date(s + 'T00:00:00')
   return `${d.getMonth()+1} 月 ${d.getDate()} 日（${WEEKDAYS[d.getDay()]}）`
+}
+function fmtDateShort(s: string) {
+  const d = new Date(s + 'T00:00:00')
+  return `${d.getMonth()+1}/${d.getDate()}（${WEEKDAYS[d.getDay()]}）`
 }
 function fmtMoney(n: number) { return '$' + Math.abs(Math.round(n)).toLocaleString() }
 function parseTimeText(t: string|null): { period: string; specific: string } {
@@ -31,6 +36,13 @@ function blankForm(date: string): OrderFormData {
     customer_name:'', unit_price:0, quantity:1, adjustments:[], order_menu:[], phone:'', note:'', menu_id:null }
 }
 
+// 套餐分組
+const MENU_GROUP_ORDER = ['合菜','旅行社','喜宴','單點','其他']
+function getMenuGroup(name: string): string {
+  for (const g of MENU_GROUP_ORDER) { if (name.startsWith(g)) return g }
+  return '其他'
+}
+
 function exportCSV(orders: Order[], date: string) {
   const headers = ['確認','時間','桌位','姓名','單價','數量','菜色','調整','總計','電話','備註']
   const rows = orders.map(o => {
@@ -40,8 +52,7 @@ function exportCSV(orders: Order[], date: string) {
       o.unit_price,o.quantity,menuText,adjText,orderTotal(o),o.phone??'',o.note??'']
   })
   const csv = [headers,...rows].map(r=>r.map(c=>{
-    const s=String(c)
-    return /[,"\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s
+    const s=String(c); return /[,"\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s
   }).join(',')).join('\n')
   const blob = new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8;'})
   const url = URL.createObjectURL(blob)
@@ -49,6 +60,137 @@ function exportCSV(orders: Order[], date: string) {
   document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url)
 }
 
+// ─── HistorySearch ──────────────────────────────────────────────
+function HistorySearch({ onClose, onCopy }: {
+  onClose: () => void
+  onCopy: (order: Order, date: string) => Promise<void>
+}) {
+  const supabase = createClient()
+  const [query, setQuery]     = useState('')
+  const [results, setResults] = useState<Order[]>([])
+  const [searching, setSearching] = useState(false)
+  const t = useRef<NodeJS.Timeout>()
+
+  useEffect(() => {
+    if (query.length < 2) { setResults([]); return }
+    clearTimeout(t.current)
+    setSearching(true)
+    t.current = setTimeout(async () => {
+      const { data } = await supabase.from('orders').select('*')
+        .or(`customer_name.ilike.%${query}%,phone.ilike.%${query}%`)
+        .order('order_date', { ascending: false })
+        .limit(30)
+      setResults((data as Order[]) ?? [])
+      setSearching(false)
+    }, 400)
+  }, [query])
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div className="bg-white w-full sm:max-w-lg rounded-t-2xl sm:rounded-xl flex flex-col"
+        style={{ maxHeight: '85vh' }}>
+        <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-100 shrink-0">
+          <i className="ti ti-history text-gray-400 text-lg" aria-hidden="true" />
+          <input
+            autoFocus
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder="搜尋姓名或電話…"
+            className="flex-1"
+          />
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-700 p-1">
+            <i className="ti ti-x" aria-hidden="true" />
+          </button>
+        </div>
+
+        <div className="overflow-y-auto flex-1">
+          {searching && <div className="py-8 text-center text-sm text-gray-400">搜尋中…</div>}
+          {!searching && query.length >= 2 && results.length === 0 && (
+            <div className="py-8 text-center text-sm text-gray-400">找不到符合的歷史訂單</div>
+          )}
+          {!searching && query.length < 2 && (
+            <div className="py-8 text-center text-sm text-gray-400">輸入姓名或電話開始搜尋</div>
+          )}
+          {results.map(order => (
+            <HistoryResult key={order.id} order={order} onCopy={onCopy} />
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function HistoryResult({ order, onCopy }: { order: Order; onCopy: (o: Order, date: string) => Promise<void> }) {
+  const [showDateInput, setShowDateInput] = useState(false)
+  const [customDate, setCustomDate]       = useState(toLocalDate(new Date()))
+  const [copying, setCopying]             = useState(false)
+  const dateRef = useRef<HTMLInputElement>(null)
+
+  async function handleCopy(date: string) {
+    setCopying(true)
+    await onCopy(order, date)
+    setCopying(false)
+  }
+
+  return (
+    <div className="flex items-start gap-3 px-4 py-3 border-b border-gray-50 last:border-0">
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="font-medium text-sm">{order.customer_name || '（未填）'}</span>
+          {order.table_no && (
+            <span className="text-xs font-mono bg-gray-100 rounded px-1.5 py-0.5">{order.table_no}</span>
+          )}
+        </div>
+        <div className="text-xs text-gray-400 mt-0.5 flex gap-2 flex-wrap">
+          <span>{fmtDateShort(order.order_date)}</span>
+          {order.time_text && <span>{order.time_text}</span>}
+          <span>{order.quantity} 桌</span>
+          {order.phone && <span>📞 {order.phone}</span>}
+        </div>
+        {order.note && <div className="text-xs text-gray-400 mt-0.5 truncate">📝 {order.note}</div>}
+      </div>
+      <div className="shrink-0 flex flex-col gap-1.5">
+        <button
+          onClick={() => handleCopy(toLocalDate(new Date()))}
+          disabled={copying}
+          className="text-xs px-3 py-1.5 rounded-lg bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-50 whitespace-nowrap"
+        >
+          {copying ? '複製中…' : '複製到今天'}
+        </button>
+        <button
+          onClick={() => { setShowDateInput(p => !p); setTimeout(() => dateRef.current?.showPicker?.(), 50) }}
+          className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 whitespace-nowrap"
+        >
+          指定日期…
+        </button>
+        {showDateInput && (
+          <div className="flex gap-1 items-center">
+            <div style={{ position:'relative' }}>
+              <button
+                onClick={() => dateRef.current?.showPicker?.()}
+                className="text-xs px-2 py-1 border border-gray-200 rounded-lg hover:bg-gray-50"
+              >{fmtDateShort(customDate)}</button>
+              <input
+                ref={dateRef}
+                type="date"
+                value={customDate}
+                onChange={e => { if(e.target.value) setCustomDate(e.target.value) }}
+                className="sr-only"
+              />
+            </div>
+            <button
+              onClick={() => handleCopy(customDate)}
+              disabled={copying}
+              className="text-xs px-2 py-1 bg-gray-900 text-white rounded-lg disabled:opacity-50"
+            >複製</button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── OrderMenuSection ───────────────────────────────────────────
 function OrderMenuSection({ menuId, menuType, pickerMenuId, value, onChange }: {
   menuId: string|null; menuType: string; pickerMenuId: string|null
   value: OrderMenuItem[]; onChange: (v: OrderMenuItem[]) => void
@@ -182,6 +324,7 @@ function AdjustmentsField({ value, onChange }: { value: Adjustment[]; onChange: 
   )
 }
 
+// ─── OrderForm ──────────────────────────────────────────────────
 function OrderForm({ initial, menus, onSave, onCancel }: {
   initial: OrderFormData; menus: Menu[]
   onSave: (data: OrderFormData) => Promise<void>; onCancel: () => void
@@ -195,6 +338,11 @@ function OrderForm({ initial, menus, onSave, onCancel }: {
   const [selectedMenu, setSelectedMenu] = useState<Menu|null>(menus.find(m=>m.id===initial.menu_id)??null)
   const [dandanMenuId, setDandanMenuId] = useState<string|null>(null)
 
+  // Phone autocomplete
+  const [phoneSugg, setPhoneSugg]       = useState<{customer_name:string; phone:string}[]>([])
+  const [showPhoneSugg, setShowPhoneSugg] = useState(false)
+  const phoneTimeout = useRef<NodeJS.Timeout>()
+
   useEffect(() => {
     supabase.from('menus').select('id').eq('menu_type','單點').limit(1)
       .then(({ data }) => { if (data?.[0]) setDandanMenuId(data[0].id) })
@@ -202,6 +350,33 @@ function OrderForm({ initial, menus, onSave, onCancel }: {
 
   function set(field: keyof OrderFormData, value: unknown) {
     setForm(f=>({...f,[field]:value}))
+  }
+
+  function handlePhoneChange(value: string) {
+    set('phone', value)
+    clearTimeout(phoneTimeout.current)
+    if (value.length >= 2) {
+      phoneTimeout.current = setTimeout(async () => {
+        const { data } = await supabase.from('orders')
+          .select('customer_name, phone')
+          .ilike('phone', `${value}%`)
+          .not('phone', 'is', null)
+          .not('customer_name', 'is', null)
+          .order('created_at', { ascending: false })
+          .limit(10)
+        // Deduplicate by phone
+        const seen = new Set<string>()
+        const unique = (data ?? []).filter((d: {customer_name:string;phone:string}) => {
+          if (!d.phone || seen.has(d.phone)) return false
+          seen.add(d.phone); return true
+        })
+        setPhoneSugg(unique as {customer_name:string;phone:string}[])
+        setShowPhoneSugg(unique.length > 0)
+      }, 300)
+    } else {
+      setPhoneSugg([])
+      setShowPhoneSugg(false)
+    }
   }
 
   async function handleMenuChange(menuId: string|null) {
@@ -225,21 +400,34 @@ function OrderForm({ initial, menus, onSave, onCancel }: {
     setSaving(false)
   }
 
+  // Build optgroup menus
+  const menuGrouped = MENU_GROUP_ORDER.reduce((acc, group) => {
+    const items = menus.filter(m => getMenuGroup(m.name) === group)
+    if (items.length > 0) acc[group] = items
+    return acc
+  }, {} as Record<string, Menu[]>)
+
   return (
     <form onSubmit={handleSubmit} className="bg-gray-50 border border-gray-200 rounded-xl p-5 space-y-4">
+      {/* 套餐選單（含分組） */}
       {menus.length>0 && (
         <div>
           <label className="text-xs text-gray-500 block mb-1">套餐</label>
           <select value={form.menu_id??''} onChange={e=>handleMenuChange(e.target.value||null)}>
             <option value="">不選套餐</option>
-            {menus.map(m=>(
-              <option key={m.id} value={m.id}>
-                {m.name}{m.menu_type==='合菜'&&m.price?`（$${m.price.toLocaleString()}/桌）`:''}
-              </option>
+            {Object.entries(menuGrouped).map(([group, groupMenus]) => (
+              <optgroup key={group} label={group}>
+                {groupMenus.map(m => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}{m.menu_type==='合菜'&&m.price?`（$${m.price.toLocaleString()}/桌）`:''}
+                  </option>
+                ))}
+              </optgroup>
             ))}
           </select>
         </div>
       )}
+
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <div>
           <label className="text-xs text-gray-500 block mb-1">桌位</label>
@@ -269,16 +457,41 @@ function OrderForm({ initial, menus, onSave, onCancel }: {
           <label className="text-xs text-gray-500 block mb-1">數量（桌）</label>
           <input type="number" min={1} value={form.quantity} onChange={e=>set('quantity',parseInt(e.target.value)||1)} />
         </div>
-        <div className="col-span-2">
+
+        {/* 電話＋自動完成 */}
+        <div className="col-span-2" style={{ position:'relative' }}>
           <label className="text-xs text-gray-500 block mb-1">電話</label>
-          <input placeholder="0912345678" value={form.phone} onChange={e=>set('phone',e.target.value)} />
+          <input
+            placeholder="0912345678"
+            value={form.phone}
+            onChange={e=>handlePhoneChange(e.target.value)}
+            onFocus={()=>phoneSugg.length>0&&setShowPhoneSugg(true)}
+            onBlur={()=>setTimeout(()=>setShowPhoneSugg(false),200)}
+            autoComplete="off"
+          />
+          {showPhoneSugg && phoneSugg.length>0 && (
+            <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-30 overflow-hidden">
+              {phoneSugg.map((s,i) => (
+                <button key={i} type="button"
+                  onMouseDown={()=>{set('phone',s.phone);set('customer_name',s.customer_name);setShowPhoneSugg(false)}}
+                  className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-gray-50 text-left">
+                  <div>
+                    <div className="text-sm font-medium">{s.customer_name}</div>
+                    <div className="text-xs text-gray-400">{s.phone}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
+
         <div className="col-span-2 sm:col-span-4">
           <label className="text-xs text-gray-500 block mb-1">備註</label>
           <textarea placeholder="特殊需求、座位安排…" value={form.note}
             onChange={e=>set('note',e.target.value)} rows={2} style={{resize:'vertical'}} />
         </div>
       </div>
+
       {form.menu_id && (
         <div className="border-t border-gray-200 pt-4">
           <OrderMenuSection menuId={form.menu_id} menuType={selectedMenu?.menu_type??'合菜'}
@@ -301,6 +514,7 @@ function OrderForm({ initial, menus, onSave, onCancel }: {
   )
 }
 
+// ─── OrderRow ───────────────────────────────────────────────────
 function OrderRow({ order, showAmounts, onToggle, onEdit, onDelete, onQuickUpdate }: {
   order: Order; showAmounts: boolean
   onToggle:()=>void; onEdit:()=>void; onDelete:()=>void
@@ -339,7 +553,6 @@ function OrderRow({ order, showAmounts, onToggle, onEdit, onDelete, onQuickUpdat
           order.confirmed?'bg-green-50 border-green-400 text-green-600':'border-gray-300 text-transparent hover:border-gray-500'}`}>
         V
       </button>
-
       <div>
         <div className="flex flex-wrap items-center gap-1.5">
           {editingTable ? (
@@ -355,15 +568,12 @@ function OrderRow({ order, showAmounts, onToggle, onEdit, onDelete, onQuickUpdat
           {order.time_text && <span className="text-xs bg-blue-50 text-blue-600 rounded px-2 py-0.5">🕐 {order.time_text}</span>}
           <span className="font-medium text-sm">{order.customer_name||'（未填）'}</span>
           {editingQty ? (
-            <input autoFocus type="number" min={1}
-              className="w-12 !py-0.5 !px-1 text-center text-xs !rounded"
-              value={qtyVal} onChange={e=>setQtyVal(e.target.value)}
-              onBlur={saveQty}
+            <input autoFocus type="number" min={1} className="w-12 !py-0.5 !px-1 text-center text-xs !rounded"
+              value={qtyVal} onChange={e=>setQtyVal(e.target.value)} onBlur={saveQty}
               onKeyDown={e=>{if(e.key==='Enter')saveQty();if(e.key==='Escape')setEditingQty(false)}} />
           ) : (
             <span onClick={()=>setEditingQty(true)}
-              className="text-xs border border-gray-200 rounded px-2 py-0.5 cursor-pointer hover:bg-gray-100 text-gray-500 transition-colors"
-              title="點擊快速編輯桌數">
+              className="text-xs border border-gray-200 rounded px-2 py-0.5 cursor-pointer hover:bg-gray-100 text-gray-500 transition-colors">
               {order.quantity} 桌
             </span>
           )}
@@ -387,14 +597,9 @@ function OrderRow({ order, showAmounts, onToggle, onEdit, onDelete, onQuickUpdat
           </div>
         )}
       </div>
-
       {showAmounts && (
         <div className="text-right">
-          {order.unit_price>0 && (
-            <div className="text-xs text-gray-400 font-mono">
-              {order.unit_price.toLocaleString()} x {order.quantity}
-            </div>
-          )}
+          {order.unit_price>0 && <div className="text-xs text-gray-400 font-mono">{order.unit_price.toLocaleString()} x {order.quantity}</div>}
           {(order.adjustments??[]).map((a,i)=>(
             <div key={i} className={`text-xs font-mono ${a.amount<0?'text-red-400':'text-gray-400'}`}>
               {a.amount>=0?'+':'−'} {fmtMoney(a.amount)}
@@ -404,12 +609,9 @@ function OrderRow({ order, showAmounts, onToggle, onEdit, onDelete, onQuickUpdat
           {om.length>0 && <div className="text-xs text-gray-300 mt-0.5">{om.length} 道菜</div>}
         </div>
       )}
-
       <div className="flex justify-end gap-1 pt-0.5">
-        <button
-          onClick={() => window.open(`/print/${order.id}`, '_blank', 'width=420,height=700')}
-          className="hidden sm:flex p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg"
-          title="列印">🖨</button>
+        <button onClick={()=>window.open(`/print/${order.id}`,'_blank','width=420,height=700')}
+          className="hidden sm:flex p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg" title="列印">🖨</button>
         <button onClick={onEdit}   className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg">✏️</button>
         <button onClick={onDelete} className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg">🗑</button>
       </div>
@@ -417,9 +619,9 @@ function OrderRow({ order, showAmounts, onToggle, onEdit, onDelete, onQuickUpdat
   )
 }
 
+// ─── Main Page ──────────────────────────────────────────────────
 export default function OrdersPage() {
   const supabase = createClient()
-
   const router   = useRouter()
   const dateInputRef = useRef<HTMLInputElement>(null)
 
@@ -433,6 +635,8 @@ export default function OrdersPage() {
   const [showAmounts,setShowAmounts]   = useState(false)
   const [showForm,setShowForm]         = useState(false)
   const [editingOrder,setEditingOrder] = useState<Order|null>(null)
+  const [historyOpen,setHistoryOpen]   = useState(false)
+  const [pendingEditId,setPendingEditId] = useState<string|null>(null)
 
   useEffect(()=>{
     supabase.auth.getUser().then(({data:{user}})=>{
@@ -453,6 +657,19 @@ export default function OrdersPage() {
   },[currentDate])
 
   useEffect(()=>{fetchOrders()},[fetchOrders])
+
+  // 複製後自動開啟編輯
+  useEffect(()=>{
+    if (!pendingEditId || orders.length===0) return
+    const order = orders.find(o=>o.id===pendingEditId)
+    if (order) {
+      setEditingOrder(order)
+      setShowForm(true)
+      setPendingEditId(null)
+      window.scrollTo({top:0,behavior:'smooth'})
+    }
+  },[orders, pendingEditId])
+
   useEffect(()=>{
     const ch = supabase.channel('orders-rt')
       .on('postgres_changes',{event:'*',schema:'public',table:'orders'},fetchOrders)
@@ -473,10 +690,7 @@ export default function OrdersPage() {
     const d=new Date(currentDate+'T00:00:00');d.setDate(d.getDate()+delta);setCurrentDate(toLocalDate(d))
   }
 
-  async function handleLogout(){
-    await supabase.auth.signOut()
-    router.push('/login')
-  }
+  async function handleLogout(){ await supabase.auth.signOut(); router.push('/login') }
 
   async function handleSave(data:OrderFormData){
     const {user}=(await supabase.auth.getUser()).data;if(!user)return
@@ -496,6 +710,20 @@ export default function OrdersPage() {
     await supabase.from('orders').update(patch).eq('id',o.id);fetchOrders()
   }
 
+  async function handleCopyOrder(sourceOrder: Order, targetDate: string) {
+    const {user}=(await supabase.auth.getUser()).data;if(!user)return
+    const { id, created_at, updated_at, profiles: _p, ...rest } = sourceOrder as Order & { profiles?: unknown; created_at: string; updated_at: string }
+    const { data } = await supabase.from('orders').insert({
+      ...rest, order_date:targetDate, confirmed:false, created_by:user.id
+    }).select().single()
+    if (data) {
+      setPendingEditId(data.id)
+      setHistoryOpen(false)
+      if (currentDate===targetDate) fetchOrders()
+      else setCurrentDate(targetDate)
+    }
+  }
+
   const formInitial:OrderFormData = editingOrder?{
     order_date:editingOrder.order_date, confirmed:editingOrder.confirmed,
     time_text:editingOrder.time_text??'', table_no:editingOrder.table_no??'',
@@ -506,64 +734,43 @@ export default function OrdersPage() {
   }:blankForm(currentDate)
 
   return (
-    <div className="pb-20">
+    <div className="pb-24">
 
-      {/* 頂部：標題 + 日期選擇 */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+      {/* 頂部 */}
+      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-white sticky top-0 z-10">
         <span className="text-base font-medium">訂位管理</span>
-
-        {/* 日期導覽 */}
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => shiftDate(-1)}
-            className="w-9 h-9 flex items-center justify-center border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors"
-            style={{ fontSize: 20, color: '#374151' }}
-          >‹</button>
-
-          <div style={{ position: 'relative' }}>
+          <button onClick={()=>shiftDate(-1)}
+            className="w-9 h-9 flex items-center justify-center border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors text-xl text-gray-600">‹</button>
+          <div style={{position:'relative'}}>
             <button
-              onClick={() => { try { dateInputRef.current?.showPicker() } catch { dateInputRef.current?.focus() } }}
-              className="flex items-center gap-2 px-4 py-2 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors"
-            >
+              onClick={()=>{ try{dateInputRef.current?.showPicker()}catch{dateInputRef.current?.focus()} }}
+              className="flex items-center gap-2 px-4 py-2 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors">
               <i className="ti ti-calendar text-gray-400 text-base" aria-hidden="true" />
               <span className="text-sm font-medium whitespace-nowrap">{fmtDate(currentDate)}</span>
             </button>
-            <input
-              ref={dateInputRef}
-              type="date"
-              value={currentDate}
-              onChange={e => { if(e.target.value) setCurrentDate(e.target.value) }}
-              className="sr-only"
-            />
+            <input ref={dateInputRef} type="date" value={currentDate}
+              onChange={e=>{ if(e.target.value) setCurrentDate(e.target.value) }}
+              className="sr-only" />
           </div>
-
-          <button
-            onClick={() => shiftDate(1)}
-            className="w-9 h-9 flex items-center justify-center border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors"
-            style={{ fontSize: 20, color: '#374151' }}
-          >›</button>
+          <button onClick={()=>shiftDate(1)}
+            className="w-9 h-9 flex items-center justify-center border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors text-xl text-gray-600">›</button>
         </div>
-
-        {/* 桌機版導覽（手機隱藏，交給 BottomNav） */}
         <div className="hidden sm:flex items-center gap-4 text-sm text-gray-500">
           <Link href="/menus" className="hover:text-gray-900">菜單管理</Link>
           <span className="text-gray-300">|</span>
           <span className="text-gray-600">{profile?.name}</span>
           <button onClick={handleLogout} className="hover:text-gray-900 bg-transparent border-none cursor-pointer text-sm text-gray-500">登出</button>
         </div>
-        {/* 手機版佔位 */}
         <div className="sm:hidden w-16" />
       </div>
 
-      {/* Tab bar：全部 / 中午 / 晚上 */}
+      {/* Tab bar */}
       <div className="flex border-b border-gray-100 bg-white">
-        {(['全部','中午','晚上'] as const).map(p => (
-          <button key={p} onClick={() => setPeriodFilter(p)}
+        {(['全部','中午','晚上'] as const).map(p=>(
+          <button key={p} onClick={()=>setPeriodFilter(p)}
             className={`flex-1 py-3 text-sm transition-colors border-b-2 -mb-px ${
-              periodFilter===p
-                ? 'text-gray-900 font-medium border-gray-900'
-                : 'text-gray-400 border-transparent hover:text-gray-600'
-            }`}>
+              periodFilter===p?'text-gray-900 font-medium border-gray-900':'text-gray-400 border-transparent hover:text-gray-600'}`}>
             {p}
           </button>
         ))}
@@ -586,20 +793,21 @@ export default function OrdersPage() {
         <div className="flex items-center justify-between gap-3 my-4 flex-wrap">
           <div className="relative">
             <i className="ti ti-search absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-sm" aria-hidden="true" />
-            <input placeholder="搜尋姓名或電話…" value={search}
-              onChange={e=>setSearch(e.target.value)} className="!pl-8 w-40" />
+            <input placeholder="搜尋今日…" value={search}
+              onChange={e=>setSearch(e.target.value)} className="!pl-8 w-36" />
           </div>
           <div className="flex gap-2 flex-wrap">
-            <button
-              onClick={()=>setShowAmounts(s=>!s)}
+            <button onClick={()=>setHistoryOpen(true)}
+              className="px-3 py-2 text-sm rounded-lg border border-gray-200 hover:bg-gray-100 flex items-center gap-1.5">
+              <i className="ti ti-history text-sm" aria-hidden="true" />歷史
+            </button>
+            <button onClick={()=>setShowAmounts(s=>!s)}
               className={`px-3 py-2 text-sm rounded-lg border transition-colors ${
                 showAmounts?'bg-gray-900 text-white border-gray-900':'border-gray-200 hover:bg-gray-100'}`}>
-              {showAmounts ? `今日 ${fmtMoney(totalAmount)}` : '顯示金額'}
+              {showAmounts?`今日 ${fmtMoney(totalAmount)}`:'顯示金額'}
             </button>
             <button onClick={()=>exportCSV(filtered,currentDate)}
-              className="px-3 py-2 text-sm rounded-lg border border-gray-200 hover:bg-gray-100">匯出 CSV</button>
-            <button onClick={()=>{setEditingOrder(null);setShowForm(true)}}
-              className="px-3 py-2 text-sm rounded-lg bg-gray-900 text-white hover:bg-gray-700">＋ 新增</button>
+              className="px-3 py-2 text-sm rounded-lg border border-gray-200 hover:bg-gray-100">匯出</button>
           </div>
         </div>
 
@@ -618,19 +826,33 @@ export default function OrdersPage() {
             : filtered.length===0
               ? <div className="py-12 text-center text-sm text-gray-400">{search?'找不到符合的訂單':'這天還沒有訂單'}</div>
               : filtered.map(order=>(
-                <OrderRow
-                  key={order.id}
-                  order={order}
-                  showAmounts={showAmounts}
+                <OrderRow key={order.id} order={order} showAmounts={showAmounts}
                   onToggle={()=>handleToggle(order)}
                   onEdit={()=>{setEditingOrder(order);setShowForm(true)}}
                   onDelete={()=>handleDelete(order)}
-                  onQuickUpdate={patch=>handleQuickUpdate(order,patch)}
-                />
+                  onQuickUpdate={patch=>handleQuickUpdate(order,patch)} />
               ))
           }
         </div>
       </div>
+
+      {/* FAB — 新增訂單（大按鈕，方便按） */}
+      <button
+        onClick={()=>{ setEditingOrder(null); setShowForm(true); window.scrollTo({top:0,behavior:'smooth'}) }}
+        className="fixed right-5 w-14 h-14 rounded-full bg-gray-900 text-white shadow-xl flex items-center justify-center hover:bg-gray-700 active:scale-95 transition-all z-20"
+        style={{ bottom: 'calc(64px + 20px)' }}
+        title="新增訂單"
+      >
+        <i className="ti ti-plus text-2xl" aria-hidden="true" />
+      </button>
+
+      {/* 歷史搜尋 */}
+      {historyOpen && (
+        <HistorySearch
+          onClose={()=>setHistoryOpen(false)}
+          onCopy={handleCopyOrder}
+        />
+      )}
 
       <BottomNav />
     </div>
