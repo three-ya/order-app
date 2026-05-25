@@ -1,9 +1,11 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
+import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import BottomNav from '@/components/BottomNav'
-import type { Order, OrderFormData, Adjustment, OrderMenuItem, Menu, MenuItem } from '@/lib/types'
+import type { Order, OrderFormData, Adjustment, OrderMenuItem, Profile, Menu, MenuItem } from '@/lib/types'
 
 const WEEKDAYS = ['日','一','二','三','四','五','六']
 function toLocalDate(d: Date) { return d.toLocaleDateString('sv-SE') }
@@ -418,9 +420,13 @@ function OrderRow({ order, showAmounts, onToggle, onEdit, onDelete, onQuickUpdat
 export default function OrdersPage() {
   const supabase = createClient()
 
+  const router   = useRouter()
+  const dateInputRef = useRef<HTMLInputElement>(null)
+
   const [currentDate,setCurrentDate]   = useState(toLocalDate(new Date()))
   const [orders,setOrders]             = useState<Order[]>([])
   const [menus,setMenus]               = useState<Menu[]>([])
+  const [profile,setProfile]           = useState<Profile|null>(null)
   const [loading,setLoading]           = useState(true)
   const [search,setSearch]             = useState('')
   const [periodFilter,setPeriodFilter] = useState<'全部'|'中午'|'晚上'>('全部')
@@ -429,6 +435,11 @@ export default function OrdersPage() {
   const [editingOrder,setEditingOrder] = useState<Order|null>(null)
 
   useEffect(()=>{
+    supabase.auth.getUser().then(({data:{user}})=>{
+      if (!user) return
+      supabase.from('profiles').select('*').eq('id',user.id).single()
+        .then(({data})=>setProfile(data as Profile))
+    })
     supabase.from('menus').select('*').order('menu_type').order('price',{ascending:true})
       .then(({data})=>setMenus((data as Menu[])??[]))
   },[])
@@ -460,6 +471,11 @@ export default function OrdersPage() {
 
   function shiftDate(delta:number){
     const d=new Date(currentDate+'T00:00:00');d.setDate(d.getDate()+delta);setCurrentDate(toLocalDate(d))
+  }
+
+  async function handleLogout(){
+    await supabase.auth.signOut()
+    router.push('/login')
   }
 
   async function handleSave(data:OrderFormData){
@@ -500,31 +516,43 @@ export default function OrdersPage() {
         <div className="flex items-center gap-2">
           <button
             onClick={() => shiftDate(-1)}
-            className="w-9 h-9 flex items-center justify-center border border-gray-200 rounded-xl hover:bg-gray-50 text-gray-600 text-lg font-medium"
-          >
-            <i className="ti ti-chevron-left" aria-hidden="true" />
-          </button>
+            className="w-9 h-9 flex items-center justify-center border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors"
+            style={{ fontSize: 20, color: '#374151' }}
+          >‹</button>
 
-          <label className="flex items-center gap-2 px-4 py-2 border border-gray-200 rounded-xl cursor-pointer hover:bg-gray-50 transition-colors" style={{position:'relative'}}>
-            <i className="ti ti-calendar text-gray-400" aria-hidden="true" />
-            <span className="text-sm font-medium whitespace-nowrap">{fmtDate(currentDate)}</span>
+          <div style={{ position: 'relative' }}>
+            <button
+              onClick={() => { try { dateInputRef.current?.showPicker() } catch { dateInputRef.current?.focus() } }}
+              className="flex items-center gap-2 px-4 py-2 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors"
+            >
+              <i className="ti ti-calendar text-gray-400 text-base" aria-hidden="true" />
+              <span className="text-sm font-medium whitespace-nowrap">{fmtDate(currentDate)}</span>
+            </button>
             <input
+              ref={dateInputRef}
               type="date"
               value={currentDate}
               onChange={e => { if(e.target.value) setCurrentDate(e.target.value) }}
-              style={{ position:'absolute', inset:0, opacity:0, cursor:'pointer', width:'100%' }}
+              className="sr-only"
             />
-          </label>
+          </div>
 
           <button
             onClick={() => shiftDate(1)}
-            className="w-9 h-9 flex items-center justify-center border border-gray-200 rounded-xl hover:bg-gray-50 text-gray-600 text-lg font-medium"
-          >
-            <i className="ti ti-chevron-right" aria-hidden="true" />
-          </button>
+            className="w-9 h-9 flex items-center justify-center border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors"
+            style={{ fontSize: 20, color: '#374151' }}
+          >›</button>
         </div>
 
-        <div className="w-16" />
+        {/* 桌機版導覽（手機隱藏，交給 BottomNav） */}
+        <div className="hidden sm:flex items-center gap-4 text-sm text-gray-500">
+          <Link href="/menus" className="hover:text-gray-900">菜單管理</Link>
+          <span className="text-gray-300">|</span>
+          <span className="text-gray-600">{profile?.name}</span>
+          <button onClick={handleLogout} className="hover:text-gray-900 bg-transparent border-none cursor-pointer text-sm text-gray-500">登出</button>
+        </div>
+        {/* 手機版佔位 */}
+        <div className="sm:hidden w-16" />
       </div>
 
       {/* Tab bar：全部 / 中午 / 晚上 */}
