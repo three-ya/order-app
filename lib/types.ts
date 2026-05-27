@@ -32,8 +32,10 @@ export interface Order {
   order_menu: OrderMenuItem[]
   phone: string | null
   note: string | null
+  private_room: boolean
   menu_id: string | null
   created_by: string | null
+  deleted_at: string | null
   created_at: string
   updated_at: string
   profiles?: Profile
@@ -69,6 +71,7 @@ export type OrderFormData = {
   adjustments: Adjustment[]
   order_menu: OrderMenuItem[]
   phone: string
+  private_room: boolean
   note: string
   menu_id: string | null
 }
