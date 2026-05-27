@@ -36,7 +36,6 @@ function blankForm(date: string): OrderFormData {
     customer_name:'', unit_price:0, quantity:1, adjustments:[], order_menu:[], phone:'', note:'', menu_id:null }
 }
 
-// 套餐分組
 const MENU_GROUP_ORDER = ['合菜','旅行社','喜宴','單點','其他']
 function getMenuGroup(name: string): string {
   for (const g of MENU_GROUP_ORDER) { if (name.startsWith(g)) return g }
@@ -61,14 +60,16 @@ function exportCSV(orders: Order[], date: string) {
 }
 
 // ─── HistorySearch ──────────────────────────────────────────────
-function HistorySearch({ onClose, onCopy }: {
+function HistorySearch({ onClose, onCopy, onRestore }: {
   onClose: () => void
   onCopy: (order: Order, date: string) => Promise<void>
+  onRestore: (order: Order) => Promise<void>
 }) {
   const supabase = createClient()
-  const [query, setQuery]     = useState('')
-  const [results, setResults] = useState<Order[]>([])
-  const [searching, setSearching] = useState(false)
+  const [query, setQuery]           = useState('')
+  const [results, setResults]       = useState<Order[]>([])
+  const [searching, setSearching]   = useState(false)
+  const [showDeleted, setShowDeleted] = useState(false)
   const t = useRef<NodeJS.Timeout>()
 
   useEffect(() => {
@@ -76,33 +77,33 @@ function HistorySearch({ onClose, onCopy }: {
     clearTimeout(t.current)
     setSearching(true)
     t.current = setTimeout(async () => {
-      const { data } = await supabase.from('orders').select('*')
+      let q = supabase.from('orders').select('*')
         .or(`customer_name.ilike.%${query}%,phone.ilike.%${query}%`)
         .order('order_date', { ascending: false })
         .limit(30)
+      if (!showDeleted) q = q.is('deleted_at', null)
+      const { data } = await q
       setResults((data as Order[]) ?? [])
       setSearching(false)
     }, 400)
-  }, [query])
+  }, [query, showDeleted])
 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-      <div className="bg-white w-full sm:max-w-lg rounded-t-2xl sm:rounded-xl flex flex-col"
-        style={{ maxHeight: '85vh' }}>
+      <div className="bg-white w-full sm:max-w-lg rounded-t-2xl sm:rounded-xl flex flex-col" style={{maxHeight:'85vh'}}>
         <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-100 shrink-0">
           <i className="ti ti-history text-gray-400 text-lg" aria-hidden="true" />
-          <input
-            autoFocus
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-            placeholder="搜尋姓名或電話…"
-            className="flex-1"
-          />
+          <input autoFocus value={query} onChange={e=>setQuery(e.target.value)}
+            placeholder="搜尋姓名或電話…" className="flex-1" />
           <button onClick={onClose} className="text-gray-400 hover:text-gray-700 p-1">
             <i className="ti ti-x" aria-hidden="true" />
           </button>
         </div>
-
+        <div className="px-4 py-2 border-b border-gray-100 flex items-center gap-2 shrink-0">
+          <input type="checkbox" id="show-del" checked={showDeleted} onChange={e=>setShowDeleted(e.target.checked)}
+            className="w-4 h-4 cursor-pointer" />
+          <label htmlFor="show-del" className="text-xs text-gray-500 cursor-pointer">包含已刪除的訂單</label>
+        </div>
         <div className="overflow-y-auto flex-1">
           {searching && <div className="py-8 text-center text-sm text-gray-400">搜尋中…</div>}
           {!searching && query.length >= 2 && results.length === 0 && (
@@ -112,7 +113,7 @@ function HistorySearch({ onClose, onCopy }: {
             <div className="py-8 text-center text-sm text-gray-400">輸入姓名或電話開始搜尋</div>
           )}
           {results.map(order => (
-            <HistoryResult key={order.id} order={order} onCopy={onCopy} />
+            <HistoryResult key={order.id} order={order} onCopy={onCopy} onRestore={onRestore} />
           ))}
         </div>
       </div>
@@ -120,26 +121,31 @@ function HistorySearch({ onClose, onCopy }: {
   )
 }
 
-function HistoryResult({ order, onCopy }: { order: Order; onCopy: (o: Order, date: string) => Promise<void> }) {
+function HistoryResult({ order, onCopy, onRestore }: {
+  order: Order
+  onCopy: (o: Order, date: string) => Promise<void>
+  onRestore: (o: Order) => Promise<void>
+}) {
   const [showDateInput, setShowDateInput] = useState(false)
   const [customDate, setCustomDate]       = useState(toLocalDate(new Date()))
-  const [copying, setCopying]             = useState(false)
+  const [loading, setLoading]             = useState(false)
   const dateRef = useRef<HTMLInputElement>(null)
+  const isDeleted = !!order.deleted_at
 
   async function handleCopy(date: string) {
-    setCopying(true)
-    await onCopy(order, date)
-    setCopying(false)
+    setLoading(true); await onCopy(order, date); setLoading(false)
+  }
+  async function handleRestore() {
+    setLoading(true); await onRestore(order); setLoading(false)
   }
 
   return (
-    <div className="flex items-start gap-3 px-4 py-3 border-b border-gray-50 last:border-0">
+    <div className={`flex items-start gap-3 px-4 py-3 border-b border-gray-50 last:border-0 ${isDeleted?'opacity-60':''}`}>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="font-medium text-sm">{order.customer_name || '（未填）'}</span>
-          {order.table_no && (
-            <span className="text-xs font-mono bg-gray-100 rounded px-1.5 py-0.5">{order.table_no}</span>
-          )}
+          {isDeleted && <span className="text-xs text-red-400 border border-red-200 rounded px-1.5 py-0.5">已刪除</span>}
+          <span className={`font-medium text-sm ${isDeleted?'line-through':''}`}>{order.customer_name || '（未填）'}</span>
+          {order.table_no && <span className="text-xs font-mono bg-gray-100 rounded px-1.5 py-0.5">{order.table_no}</span>}
         </div>
         <div className="text-xs text-gray-400 mt-0.5 flex gap-2 flex-wrap">
           <span>{fmtDateShort(order.order_date)}</span>
@@ -150,40 +156,37 @@ function HistoryResult({ order, onCopy }: { order: Order; onCopy: (o: Order, dat
         {order.note && <div className="text-xs text-gray-400 mt-0.5 truncate">📝 {order.note}</div>}
       </div>
       <div className="shrink-0 flex flex-col gap-1.5">
-        <button
-          onClick={() => handleCopy(toLocalDate(new Date()))}
-          disabled={copying}
-          className="text-xs px-3 py-1.5 rounded-lg bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-50 whitespace-nowrap"
-        >
-          {copying ? '複製中…' : '複製到今天'}
-        </button>
-        <button
-          onClick={() => { setShowDateInput(p => !p); setTimeout(() => dateRef.current?.showPicker?.(), 50) }}
-          className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 whitespace-nowrap"
-        >
-          指定日期…
-        </button>
-        {showDateInput && (
-          <div className="flex gap-1 items-center">
-            <div style={{ position:'relative' }}>
-              <button
-                onClick={() => dateRef.current?.showPicker?.()}
-                className="text-xs px-2 py-1 border border-gray-200 rounded-lg hover:bg-gray-50"
-              >{fmtDateShort(customDate)}</button>
-              <input
-                ref={dateRef}
-                type="date"
-                value={customDate}
-                onChange={e => { if(e.target.value) setCustomDate(e.target.value) }}
-                className="sr-only"
-              />
-            </div>
-            <button
-              onClick={() => handleCopy(customDate)}
-              disabled={copying}
-              className="text-xs px-2 py-1 bg-gray-900 text-white rounded-lg disabled:opacity-50"
-            >複製</button>
-          </div>
+        {isDeleted ? (
+          <button onClick={handleRestore} disabled={loading}
+            className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-50 whitespace-nowrap">
+            {loading?'還原中…':'還原'}
+          </button>
+        ) : (
+          <>
+            <button onClick={()=>handleCopy(toLocalDate(new Date()))} disabled={loading}
+              className="text-xs px-3 py-1.5 rounded-lg bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-50 whitespace-nowrap">
+              {loading?'複製中…':'複製到今天'}
+            </button>
+            <button onClick={()=>{ setShowDateInput(p=>!p); setTimeout(()=>dateRef.current?.showPicker?.(),50) }}
+              className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 whitespace-nowrap">
+              指定日期…
+            </button>
+            {showDateInput && (
+              <div className="flex gap-1 items-center">
+                <div style={{position:'relative'}}>
+                  <button onClick={()=>dateRef.current?.showPicker?.()}
+                    className="text-xs px-2 py-1 border border-gray-200 rounded-lg hover:bg-gray-50">
+                    {fmtDateShort(customDate)}
+                  </button>
+                  <input ref={dateRef} type="date" value={customDate}
+                    onChange={e=>{ if(e.target.value) setCustomDate(e.target.value) }}
+                    className="sr-only" />
+                </div>
+                <button onClick={()=>handleCopy(customDate)} disabled={loading}
+                  className="text-xs px-2 py-1 bg-gray-900 text-white rounded-lg disabled:opacity-50">複製</button>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>
@@ -337,9 +340,10 @@ function OrderForm({ initial, menus, onSave, onCancel }: {
   const [saving, setSaving]         = useState(false)
   const [selectedMenu, setSelectedMenu] = useState<Menu|null>(menus.find(m=>m.id===initial.menu_id)??null)
   const [dandanMenuId, setDandanMenuId] = useState<string|null>(null)
+  const formDateRef = useRef<HTMLInputElement>(null)
 
   // Phone autocomplete
-  const [phoneSugg, setPhoneSugg]       = useState<{customer_name:string; phone:string}[]>([])
+  const [phoneSugg, setPhoneSugg]         = useState<{customer_name:string; phone:string}[]>([])
   const [showPhoneSugg, setShowPhoneSugg] = useState(false)
   const phoneTimeout = useRef<NodeJS.Timeout>()
 
@@ -360,11 +364,11 @@ function OrderForm({ initial, menus, onSave, onCancel }: {
         const { data } = await supabase.from('orders')
           .select('customer_name, phone')
           .ilike('phone', `${value}%`)
+          .is('deleted_at', null)
           .not('phone', 'is', null)
           .not('customer_name', 'is', null)
           .order('created_at', { ascending: false })
           .limit(10)
-        // Deduplicate by phone
         const seen = new Set<string>()
         const unique = (data ?? []).filter((d: {customer_name:string;phone:string}) => {
           if (!d.phone || seen.has(d.phone)) return false
@@ -374,8 +378,7 @@ function OrderForm({ initial, menus, onSave, onCancel }: {
         setShowPhoneSugg(unique.length > 0)
       }, 300)
     } else {
-      setPhoneSugg([])
-      setShowPhoneSugg(false)
+      setPhoneSugg([]); setShowPhoneSugg(false)
     }
   }
 
@@ -400,7 +403,6 @@ function OrderForm({ initial, menus, onSave, onCancel }: {
     setSaving(false)
   }
 
-  // Build optgroup menus
   const menuGrouped = MENU_GROUP_ORDER.reduce((acc, group) => {
     const items = menus.filter(m => getMenuGroup(m.name) === group)
     if (items.length > 0) acc[group] = items
@@ -409,6 +411,24 @@ function OrderForm({ initial, menus, onSave, onCancel }: {
 
   return (
     <form onSubmit={handleSubmit} className="bg-gray-50 border border-gray-200 rounded-xl p-5 space-y-4">
+
+      {/* 訂位日期（可以改日期） */}
+      <div>
+        <label className="text-xs text-gray-500 block mb-1">訂位日期</label>
+        <div style={{position:'relative', display:'inline-block'}}>
+          <button type="button"
+            onClick={()=>{ try{formDateRef.current?.showPicker()}catch{formDateRef.current?.focus()} }}
+            className="flex items-center gap-2 px-3 py-2 border border-gray-200 rounded-xl hover:bg-gray-100 transition-colors bg-white">
+            <i className="ti ti-calendar text-gray-400 text-sm" aria-hidden="true" />
+            <span className="text-sm font-medium">{fmtDate(form.order_date)}</span>
+            <i className="ti ti-pencil text-gray-300 text-xs" aria-hidden="true" />
+          </button>
+          <input ref={formDateRef} type="date" value={form.order_date}
+            onChange={e=>{ if(e.target.value) set('order_date', e.target.value) }}
+            className="sr-only" />
+        </div>
+      </div>
+
       {/* 套餐選單（含分組） */}
       {menus.length>0 && (
         <div>
@@ -457,18 +477,14 @@ function OrderForm({ initial, menus, onSave, onCancel }: {
           <label className="text-xs text-gray-500 block mb-1">數量（桌）</label>
           <input type="number" min={1} value={form.quantity} onChange={e=>set('quantity',parseInt(e.target.value)||1)} />
         </div>
-
-        {/* 電話＋自動完成 */}
-        <div className="col-span-2" style={{ position:'relative' }}>
+        {/* 電話 + 自動完成 */}
+        <div className="col-span-2" style={{position:'relative'}}>
           <label className="text-xs text-gray-500 block mb-1">電話</label>
-          <input
-            placeholder="0912345678"
-            value={form.phone}
+          <input placeholder="0912345678" value={form.phone}
             onChange={e=>handlePhoneChange(e.target.value)}
             onFocus={()=>phoneSugg.length>0&&setShowPhoneSugg(true)}
             onBlur={()=>setTimeout(()=>setShowPhoneSugg(false),200)}
-            autoComplete="off"
-          />
+            autoComplete="off" />
           {showPhoneSugg && phoneSugg.length>0 && (
             <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-30 overflow-hidden">
               {phoneSugg.map((s,i) => (
@@ -484,7 +500,6 @@ function OrderForm({ initial, menus, onSave, onCancel }: {
             </div>
           )}
         </div>
-
         <div className="col-span-2 sm:col-span-4">
           <label className="text-xs text-gray-500 block mb-1">備註</label>
           <textarea placeholder="特殊需求、座位安排…" value={form.note}
@@ -544,15 +559,11 @@ function OrderRow({ order, showAmounts, onToggle, onEdit, onDelete, onQuickUpdat
   const gridCols = showAmounts ? '28px 1fr 100px 92px' : '28px 1fr 92px'
 
   return (
-    <div
-      style={{ display:'grid', gridTemplateColumns:gridCols, gap:'12px', alignItems:'start' }}
-      className={`px-4 py-3 border-b border-gray-100 last:border-0 ${!order.confirmed?'opacity-60':''}`}
-    >
+    <div style={{display:'grid',gridTemplateColumns:gridCols,gap:'12px',alignItems:'start'}}
+      className={`px-4 py-3 border-b border-gray-100 last:border-0 ${!order.confirmed?'opacity-60':''}`}>
       <button onClick={onToggle}
         className={`w-[22px] h-[22px] rounded-full border mt-0.5 flex items-center justify-center text-xs shrink-0 ${
-          order.confirmed?'bg-green-50 border-green-400 text-green-600':'border-gray-300 text-transparent hover:border-gray-500'}`}>
-        V
-      </button>
+          order.confirmed?'bg-green-50 border-green-400 text-green-600':'border-gray-300 text-transparent hover:border-gray-500'}`}>V</button>
       <div>
         <div className="flex flex-wrap items-center gap-1.5">
           {editingTable ? (
@@ -619,23 +630,46 @@ function OrderRow({ order, showAmounts, onToggle, onEdit, onDelete, onQuickUpdat
   )
 }
 
+// ─── DeletedOrderRow ─────────────────────────────────────────────
+function DeletedOrderRow({ order, onRestore }: { order: Order; onRestore: () => void }) {
+  return (
+    <div className="flex items-center gap-3 px-4 py-2.5 opacity-50">
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="text-xs text-red-400">已刪除</span>
+          <span className="text-sm line-through text-gray-500">{order.customer_name||'（未填）'}</span>
+          {order.table_no && <span className="text-xs font-mono text-gray-400">{order.table_no}</span>}
+          {order.time_text && <span className="text-xs text-gray-400">{order.time_text}</span>}
+          <span className="text-xs text-gray-400">{order.quantity} 桌</span>
+        </div>
+      </div>
+      <button onClick={onRestore}
+        className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg hover:bg-gray-50 shrink-0 text-gray-600">
+        還原
+      </button>
+    </div>
+  )
+}
+
 // ─── Main Page ──────────────────────────────────────────────────
 export default function OrdersPage() {
   const supabase = createClient()
   const router   = useRouter()
   const dateInputRef = useRef<HTMLInputElement>(null)
 
-  const [currentDate,setCurrentDate]   = useState(toLocalDate(new Date()))
-  const [orders,setOrders]             = useState<Order[]>([])
-  const [menus,setMenus]               = useState<Menu[]>([])
-  const [profile,setProfile]           = useState<Profile|null>(null)
-  const [loading,setLoading]           = useState(true)
-  const [search,setSearch]             = useState('')
-  const [periodFilter,setPeriodFilter] = useState<'全部'|'中午'|'晚上'>('全部')
-  const [showAmounts,setShowAmounts]   = useState(false)
-  const [showForm,setShowForm]         = useState(false)
-  const [editingOrder,setEditingOrder] = useState<Order|null>(null)
-  const [historyOpen,setHistoryOpen]   = useState(false)
+  const [currentDate,setCurrentDate]     = useState(toLocalDate(new Date()))
+  const [orders,setOrders]               = useState<Order[]>([])
+  const [deletedOrders,setDeletedOrders] = useState<Order[]>([])
+  const [menus,setMenus]                 = useState<Menu[]>([])
+  const [profile,setProfile]             = useState<Profile|null>(null)
+  const [loading,setLoading]             = useState(true)
+  const [search,setSearch]               = useState('')
+  const [periodFilter,setPeriodFilter]   = useState<'全部'|'中午'|'晚上'>('全部')
+  const [showAmounts,setShowAmounts]     = useState(false)
+  const [showDeleted,setShowDeleted]     = useState(false)
+  const [showForm,setShowForm]           = useState(false)
+  const [editingOrder,setEditingOrder]   = useState<Order|null>(null)
+  const [historyOpen,setHistoryOpen]     = useState(false)
   const [pendingEditId,setPendingEditId] = useState<string|null>(null)
 
   useEffect(()=>{
@@ -652,22 +686,18 @@ export default function OrdersPage() {
     setLoading(true)
     const {data} = await supabase.from('orders').select('*,profiles(id,name,role)')
       .eq('order_date',currentDate).order('created_at',{ascending:true})
-    setOrders((data as Order[])??[])
+    const all = (data as Order[]) ?? []
+    setOrders(all.filter(o => !o.deleted_at))
+    setDeletedOrders(all.filter(o => !!o.deleted_at))
     setLoading(false)
   },[currentDate])
 
   useEffect(()=>{fetchOrders()},[fetchOrders])
 
-  // 複製後自動開啟編輯
   useEffect(()=>{
     if (!pendingEditId || orders.length===0) return
     const order = orders.find(o=>o.id===pendingEditId)
-    if (order) {
-      setEditingOrder(order)
-      setShowForm(true)
-      setPendingEditId(null)
-      window.scrollTo({top:0,behavior:'smooth'})
-    }
+    if (order) { setEditingOrder(order); setShowForm(true); setPendingEditId(null); window.scrollTo({top:0,behavior:'smooth'}) }
   },[orders, pendingEditId])
 
   useEffect(()=>{
@@ -689,9 +719,7 @@ export default function OrdersPage() {
   function shiftDate(delta:number){
     const d=new Date(currentDate+'T00:00:00');d.setDate(d.getDate()+delta);setCurrentDate(toLocalDate(d))
   }
-
   async function handleLogout(){ await supabase.auth.signOut(); router.push('/login') }
-
   async function handleSave(data:OrderFormData){
     const {user}=(await supabase.auth.getUser()).data;if(!user)return
     const payload={...data,created_by:user.id}
@@ -702,25 +730,28 @@ export default function OrdersPage() {
   async function handleToggle(o:Order){
     await supabase.from('orders').update({confirmed:!o.confirmed}).eq('id',o.id);fetchOrders()
   }
+  // 軟刪除
   async function handleDelete(o:Order){
-    if(!confirm(`確定刪除「${o.customer_name??o.table_no}」？`))return
-    await supabase.from('orders').delete().eq('id',o.id);fetchOrders()
+    if(!confirm(`確定刪除「${o.customer_name??o.table_no}」？（可在列表底部還原）`))return
+    await supabase.from('orders').update({deleted_at:new Date().toISOString()}).eq('id',o.id)
+    fetchOrders()
+  }
+  async function handleRestore(o:Order){
+    await supabase.from('orders').update({deleted_at:null}).eq('id',o.id)
+    fetchOrders()
   }
   async function handleQuickUpdate(o:Order,patch:{table_no?:string|null;quantity?:number}){
     await supabase.from('orders').update(patch).eq('id',o.id);fetchOrders()
   }
-
   async function handleCopyOrder(sourceOrder: Order, targetDate: string) {
     const {user}=(await supabase.auth.getUser()).data;if(!user)return
-    const { id, created_at, updated_at, profiles: _p, ...rest } = sourceOrder as Order & { profiles?: unknown; created_at: string; updated_at: string }
+    const { id: _id, created_at: _ca, updated_at: _ua, deleted_at: _da, profiles: _p, ...rest } = sourceOrder as Order & {created_at:string;updated_at:string;profiles?:unknown}
     const { data } = await supabase.from('orders').insert({
-      ...rest, order_date:targetDate, confirmed:false, created_by:user.id
+      ...rest, order_date:targetDate, confirmed:false, deleted_at:null, created_by:user.id
     }).select().single()
     if (data) {
-      setPendingEditId(data.id)
-      setHistoryOpen(false)
-      if (currentDate===targetDate) fetchOrders()
-      else setCurrentDate(targetDate)
+      setPendingEditId(data.id); setHistoryOpen(false)
+      if (currentDate===targetDate) fetchOrders(); else setCurrentDate(targetDate)
     }
   }
 
@@ -735,7 +766,6 @@ export default function OrdersPage() {
 
   return (
     <div className="pb-24">
-
       {/* 頂部 */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-white sticky top-0 z-10">
         <span className="text-base font-medium">訂位管理</span>
@@ -743,15 +773,13 @@ export default function OrdersPage() {
           <button onClick={()=>shiftDate(-1)}
             className="w-9 h-9 flex items-center justify-center border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors text-xl text-gray-600">‹</button>
           <div style={{position:'relative'}}>
-            <button
-              onClick={()=>{ try{dateInputRef.current?.showPicker()}catch{dateInputRef.current?.focus()} }}
+            <button onClick={()=>{ try{dateInputRef.current?.showPicker()}catch{dateInputRef.current?.focus()} }}
               className="flex items-center gap-2 px-4 py-2 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors">
               <i className="ti ti-calendar text-gray-400 text-base" aria-hidden="true" />
               <span className="text-sm font-medium whitespace-nowrap">{fmtDate(currentDate)}</span>
             </button>
             <input ref={dateInputRef} type="date" value={currentDate}
-              onChange={e=>{ if(e.target.value) setCurrentDate(e.target.value) }}
-              className="sr-only" />
+              onChange={e=>{ if(e.target.value) setCurrentDate(e.target.value) }} className="sr-only" />
           </div>
           <button onClick={()=>shiftDate(1)}
             className="w-9 h-9 flex items-center justify-center border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors text-xl text-gray-600">›</button>
@@ -777,7 +805,6 @@ export default function OrdersPage() {
       </div>
 
       <div className="max-w-3xl mx-auto px-4">
-        {/* 統計 */}
         <div className="grid grid-cols-2 gap-3 mt-4">
           <div className="bg-white border border-gray-100 rounded-xl p-3">
             <div className="text-xs text-gray-400 mb-1">訂單數</div>
@@ -789,12 +816,10 @@ export default function OrdersPage() {
           </div>
         </div>
 
-        {/* 操作列 */}
         <div className="flex items-center justify-between gap-3 my-4 flex-wrap">
           <div className="relative">
             <i className="ti ti-search absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-sm" aria-hidden="true" />
-            <input placeholder="搜尋今日…" value={search}
-              onChange={e=>setSearch(e.target.value)} className="!pl-8 w-36" />
+            <input placeholder="搜尋今日…" value={search} onChange={e=>setSearch(e.target.value)} className="!pl-8 w-36" />
           </div>
           <div className="flex gap-2 flex-wrap">
             <button onClick={()=>setHistoryOpen(true)}
@@ -811,7 +836,6 @@ export default function OrdersPage() {
           </div>
         </div>
 
-        {/* 表單 */}
         {showForm && (
           <div className="mb-4">
             <OrderForm initial={formInitial} menus={menus} onSave={handleSave}
@@ -820,7 +844,7 @@ export default function OrdersPage() {
         )}
 
         {/* 訂單列表 */}
-        <div className="bg-white border border-gray-100 rounded-xl overflow-hidden mb-4">
+        <div className="bg-white border border-gray-100 rounded-xl overflow-hidden mb-2">
           {loading
             ? <div className="py-12 text-center text-sm text-gray-400">載入中…</div>
             : filtered.length===0
@@ -834,23 +858,43 @@ export default function OrdersPage() {
               ))
           }
         </div>
+
+        {/* 已刪除的訂單（今天） */}
+        {deletedOrders.length > 0 && (
+          <div className="mb-4">
+            <button
+              onClick={()=>setShowDeleted(s=>!s)}
+              className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-600 py-1"
+            >
+              <i className={`ti ${showDeleted?'ti-chevron-up':'ti-chevron-down'} text-xs`} aria-hidden="true" />
+              已刪除 {deletedOrders.length} 筆
+            </button>
+            {showDeleted && (
+              <div className="bg-white border border-gray-100 rounded-xl overflow-hidden mt-1">
+                {deletedOrders.map(order=>(
+                  <DeletedOrderRow key={order.id} order={order} onRestore={()=>handleRestore(order)} />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
-      {/* FAB — 新增訂單（大按鈕，方便按） */}
+      {/* FAB */}
       <button
         onClick={()=>{ setEditingOrder(null); setShowForm(true); window.scrollTo({top:0,behavior:'smooth'}) }}
         className="fixed right-5 w-14 h-14 rounded-full bg-gray-900 text-white shadow-xl flex items-center justify-center hover:bg-gray-700 active:scale-95 transition-all z-20"
-        style={{ bottom: 'calc(64px + 20px)' }}
+        style={{ bottom:'calc(64px + 20px)' }}
         title="新增訂單"
       >
         <i className="ti ti-plus text-2xl" aria-hidden="true" />
       </button>
 
-      {/* 歷史搜尋 */}
       {historyOpen && (
         <HistorySearch
           onClose={()=>setHistoryOpen(false)}
           onCopy={handleCopyOrder}
+          onRestore={handleRestore}
         />
       )}
 
